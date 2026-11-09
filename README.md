@@ -21,6 +21,7 @@ Am ersten bzw. letzten Bild bleibt die Navigation stehen (kein Umlauf).
 
 Datei > Einstellungen... (Strg+,). Gespeichert in `%APPDATA%\SimpleViewer\settings.json`;
 fehlende oder ungültige Werte werden still durch Standardwerte ersetzt.
+„Hintergrund-Deckkraft“ der Overlays: 0 % = völlig durchsichtig, 100 % = deckend (Standard 70 %).
 
 ## Build / Publish
 

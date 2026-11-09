@@ -10,7 +10,7 @@ internal sealed class SettingsWindow : Window
 {
     readonly Action<Settings> apply;
     readonly ComboBox font = new() { IsEditable = false };
-    readonly Slider fontSize = Num(8, 48), transparency = Num(0, 100), margin = Num(0, 50), maxWait = Num(1, 60);
+    readonly Slider fontSize = Num(8, 48), opacity = Num(0, 100), margin = Num(0, 50), maxWait = Num(1, 60);
     readonly TextBox fontColor = new(), overlayBg = new(), imageBg = new();
     readonly ComboBox position = new(), defaultSort = new();
     readonly CheckBox invertWheel = new() { Content = "Mausrad-Richtung beim Blättern umkehren" };
@@ -42,7 +42,7 @@ internal sealed class SettingsWindow : Window
             Row("Schriftgröße", WithValue(fontSize, "")),
             Row("Schriftfarbe", ColorBox(fontColor)),
             Row("Hintergrundfarbe", ColorBox(overlayBg)),
-            Row("Hintergrund-Transparenz", WithValue(transparency, " %")),
+            Row("Hintergrund-Deckkraft", WithValue(opacity, " %")),
             Row("Overlay-Position (Metadaten)", position),
             Row("Vorschau", previewBack));
         var view = Group("Ansicht",
@@ -68,7 +68,7 @@ internal sealed class SettingsWindow : Window
 
         // Any change refreshes the preview and the color validation.
         foreach (var t in new[] { fontColor, overlayBg, imageBg }) t.TextChanged += (_, _) => Refresh();
-        foreach (var s in new[] { fontSize, transparency }) s.ValueChanged += (_, _) => Refresh();
+        foreach (var s in new[] { fontSize, opacity }) s.ValueChanged += (_, _) => Refresh();
         font.SelectionChanged += (_, _) => Refresh();
         Show(current);
     }
@@ -137,7 +137,7 @@ internal sealed class SettingsWindow : Window
         fontSize.Value = s.FontSize;
         fontColor.Text = s.FontColor;
         overlayBg.Text = s.OverlayBackground;
-        transparency.Value = s.OverlayTransparency;
+        opacity.Value = s.OverlayOpacity;
         position.SelectedIndex = (int)s.MetadataPosition;
         imageBg.Text = s.ImageBackground;
         margin.Value = s.MouseMargin;
@@ -153,7 +153,7 @@ internal sealed class SettingsWindow : Window
         if (font.SelectedItem is string f) previewText.FontFamily = new FontFamily(f);
         previewText.FontSize = fontSize.Value;
         if (Settings.ParseColor(fontColor.Text) is Color fc) previewText.Foreground = new SolidColorBrush(fc);
-        if (Settings.ParseColor(overlayBg.Text) is Color bc) preview.Background = MainWindow.OverlayBrush(bc, (int)transparency.Value);
+        if (Settings.ParseColor(overlayBg.Text) is Color bc) preview.Background = MainWindow.OverlayBrush(bc, (int)opacity.Value);
     }
 
     // Returns false (and applies nothing) while any color field is invalid.
@@ -170,7 +170,7 @@ internal sealed class SettingsWindow : Window
             FontSize = fontSize.Value,
             FontColor = fontColor.Text.ToUpperInvariant(),
             OverlayBackground = overlayBg.Text.ToUpperInvariant(),
-            OverlayTransparency = (int)transparency.Value,
+            OverlayOpacity = (int)opacity.Value,
             MetadataPosition = (OverlayPosition)Math.Max(0, position.SelectedIndex),
             ImageBackground = imageBg.Text.ToUpperInvariant(),
             MouseMargin = (int)margin.Value,

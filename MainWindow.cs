@@ -124,15 +124,16 @@ public sealed class MainWindow : Window
         IsHitTestVisible = false, Visibility = Visibility.Collapsed,
     };
 
-    internal static Brush OverlayBrush(Color c, int transparencyPercent) =>
-        new SolidColorBrush(Color.FromArgb((byte)Math.Round(255 * (100 - transparencyPercent) / 100.0), c.R, c.G, c.B));
+    // opacityPercent: 0 = fully transparent, 100 = fully opaque.
+    internal static Brush OverlayBrush(Color c, int opacityPercent) =>
+        new SolidColorBrush(Color.FromArgb((byte)Math.Round(255 * Math.Clamp(opacityPercent, 0, 100) / 100.0), c.R, c.G, c.B));
 
     // Applies settings live: shared overlay style, image-area background, metadata position, mouse margin.
     void ApplySettings(Settings s)
     {
         settings = s;
         var fg = new SolidColorBrush(Settings.ParseColor(s.FontColor) ?? Colors.White);
-        var bg = OverlayBrush(Settings.ParseColor(s.OverlayBackground) ?? Colors.Black, s.OverlayTransparency);
+        var bg = OverlayBrush(Settings.ParseColor(s.OverlayBackground) ?? Colors.Black, s.OverlayOpacity);
         var font = new FontFamily(s.FontFamily);
         foreach (var b in new[] { metaOverlay, helpOverlay, emptyBox, toastBox })
         {

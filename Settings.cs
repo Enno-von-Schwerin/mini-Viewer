@@ -16,7 +16,7 @@ internal sealed class Settings
     public double FontSize { get; set; } = 14;
     public string FontColor { get; set; } = "#FFFFFF";
     public string OverlayBackground { get; set; } = "#000000";
-    public int OverlayTransparency { get; set; } = 70;      // percent; 0 = opaque
+    public int OverlayOpacity { get; set; } = 70;           // percent; 0 = fully transparent, 100 = fully opaque
     public OverlayPosition MetadataPosition { get; set; } = OverlayPosition.TopLeft;
     // View
     public string ImageBackground { get; set; } = "#000000";
@@ -50,7 +50,7 @@ internal sealed class Settings
             s.FontSize = Get(r, nameof(FontSize), s.FontSize, v => v is >= 8 and <= 48);
             s.FontColor = Get(r, nameof(FontColor), s.FontColor, v => ParseColor(v) != null);
             s.OverlayBackground = Get(r, nameof(OverlayBackground), s.OverlayBackground, v => ParseColor(v) != null);
-            s.OverlayTransparency = Get(r, nameof(OverlayTransparency), s.OverlayTransparency, v => v is >= 0 and <= 100);
+            s.OverlayOpacity = Get(r, nameof(OverlayOpacity), s.OverlayOpacity, v => v is >= 0 and <= 100);
             s.MetadataPosition = Get(r, nameof(MetadataPosition), s.MetadataPosition, Enum.IsDefined);
             s.ImageBackground = Get(r, nameof(ImageBackground), s.ImageBackground, v => ParseColor(v) != null);
             s.MouseMargin = Get(r, nameof(MouseMargin), s.MouseMargin, v => v is >= 0 and <= 50);
