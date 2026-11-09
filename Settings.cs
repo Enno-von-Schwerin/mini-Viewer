@@ -44,6 +44,9 @@ internal sealed class Settings
     public List<QuickFolder> QuickFolders { get; set; } = EmptySlots();
     // Live mode
     public int LiveMaxWaitSeconds { get; set; } = 10;
+    public bool WheelToLive { get; set; } = true;            // scrolling on at the last image switches live mode on
+    public double WheelToLivePauseSeconds { get; set; } = 2.0; // max pause between counted wheel steps
+    public static bool ValidPause(double v) => v is >= 0.5 and <= 10;
 
     public static readonly string FilePath =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "SimpleViewer", "settings.json");
@@ -85,6 +88,8 @@ internal sealed class Settings
             s.DefaultSort = Get(r, nameof(DefaultSort), s.DefaultSort, Enum.IsDefined);
             s.LiveOnStart = Get(r, nameof(LiveOnStart), s.LiveOnStart);
             s.LiveMaxWaitSeconds = Get(r, nameof(LiveMaxWaitSeconds), s.LiveMaxWaitSeconds, v => v is >= 1 and <= 60);
+            s.WheelToLive = Get(r, nameof(WheelToLive), s.WheelToLive);
+            s.WheelToLivePauseSeconds = Get(r, nameof(WheelToLivePauseSeconds), s.WheelToLivePauseSeconds, ValidPause);
             s.OpenFolderShows = Get(r, nameof(OpenFolderShows), s.OpenFolderShows, Enum.IsDefined);
             // Former global "QuickFolderFileDialog" serves as the per-slot default when a slot has no own value.
             bool legacyDialog = Get(r, "QuickFolderFileDialog", false);

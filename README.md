@@ -7,6 +7,15 @@ Ohne Argument gestartet zeigt es ein leeres Fenster mit Menü; Ordner öffnen mi
 Das Menü erscheint sonst, wenn die Maus an den oberen Fensterrand fährt, oder mit Alt/F10.
 Am ersten bzw. letzten Bild bleibt die Navigation stehen (kein Umlauf).
 
+## Live-Modus per Mausrad
+
+Am letzten Bild (Live-Modus aus) zählt jede weitere Mausrad-Raste vorwärts als Schritt: „Letztes Bild“,
+„Live Update Ein (3)“, „(2)“, „(1)“, beim 5. Schritt wird der Live-Modus eingeschaltet wie mit L.
+Der Zähler beginnt neu bei zu langer Pause, Zurückscrollen, jeder Taste oder Maustaste, Löschen, Ordnerwechsel
+oder manuellem Umschalten des Live-Modus. Die Pfeiltaste Rechts zählt nicht mit.
+Einstellungen > Live-Modus: „Live-Modus durch Weiterscrollen am letzten Bild einschalten“ (Standard: an) und
+„Pause zwischen Scrollschritten (s)“ (0,5–10, Standard 2,0).
+
 ## Ansicht: Vollbild, 1:1 über alle Monitore, Mausführung
 
 - **F11**: randloses Vollbild auf dem Monitor, auf dem das Fenster überwiegend liegt (inkl. Taskleistenbereich).
@@ -84,6 +93,7 @@ Die Tabelle wird aus `KeyTable.cs` erzeugt (`SimpleViewer.exe --update-readme RE
 | Strg+O | Ordner öffnen |
 | Strg+, | Einstellungen |
 | Mausrad | vorheriges/nächstes Bild (kein Umlauf am Anfang/Ende) |
+| Mausrad am letzten Bild weiter | nach 5 Schritten Live-Modus ein (Pause zurücksetzen) |
 | Rechte Maustaste + Mausrad / Strg + Mausrad | Zoom (Punkt unter dem Mauszeiger bleibt stehen) |
 | Maus bewegen | bei Bild größer als die Fläche: Ausschnitt folgt der Maus (Bildrand = Rand von R, der Bildfläche in Ausgangsgröße) |
 | Mittlere Maustaste | 1:1-Ansicht über alle Monitore umschalten (Maus bewegen = Ausschnitt verschieben) |

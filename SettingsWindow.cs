@@ -16,6 +16,8 @@ internal sealed class SettingsWindow : Window
     readonly TextBox[] slotNames = new TextBox[Settings.QuickFolderCount], slotPaths = new TextBox[Settings.QuickFolderCount];
     readonly CheckBox invertWheel = new() { Content = "Mausrad-Richtung beim Blättern umkehren" };
     readonly CheckBox liveOnStart = new() { Content = "Live-Modus beim Start aktivieren" };
+    readonly CheckBox wheelToLive = new() { Content = "Live-Modus durch Weiterscrollen am letzten Bild einschalten" };
+    readonly TextBox wheelPause = new() { Width = 60, ToolTip = "0,5 bis 10 s; ungültige Werte werden durch 2,0 ersetzt" };
     readonly CheckBox[] slotDialogs = new CheckBox[Settings.QuickFolderCount];
     readonly Border preview = new() { Padding = new Thickness(12, 8, 12, 8), CornerRadius = new CornerRadius(6) };
     readonly TextBlock previewText = new() { Text = "Seed: 1234567890, Steps: 30\nÄÖÜ äöü ß – Beispieltext" };
@@ -61,7 +63,9 @@ internal sealed class SettingsWindow : Window
         };
         for (int i = 0; i < Settings.QuickFolderCount; i++) quickRows.Add(SlotRow(i));
         var quickGroup = Group("Schnellzugriff-Ordner", [.. quickRows]);
-        var liveGroup = Group("Live-Modus", Row("Maximale Wartezeit für unfertige Dateien", WithValue(maxWait, " s")));
+        var liveGroup = Group("Live-Modus", Row("Maximale Wartezeit für unfertige Dateien", WithValue(maxWait, " s")),
+            Row("", wheelToLive),
+            Row("Pause zwischen Scrollschritten (s)", new StackPanel { Orientation = Orientation.Horizontal, Children = { wheelPause } }));
 
         var defaults = Button("Standardwerte", () => Show(new Settings()));
         var ok = Button("OK", () => { if (TryApply()) Close(); });
@@ -190,6 +194,8 @@ internal sealed class SettingsWindow : Window
         defaultSort.SelectedIndex = (int)s.DefaultSort;
         liveOnStart.IsChecked = s.LiveOnStart;
         maxWait.Value = s.LiveMaxWaitSeconds;
+        wheelToLive.IsChecked = s.WheelToLive;
+        wheelPause.Text = s.WheelToLivePauseSeconds.ToString("0.0#", German);
         openShows.SelectedIndex = (int)s.OpenFolderShows;
         for (int i = 0; i < Settings.QuickFolderCount; i++)
         {
@@ -207,6 +213,13 @@ internal sealed class SettingsWindow : Window
         if (Settings.ParseColor(fontColor.Text) is Color fc) previewText.Foreground = new SolidColorBrush(fc);
         if (Settings.ParseColor(overlayBg.Text) is Color bc) preview.Background = MainWindow.OverlayBrush(bc, (int)opacity.Value);
     }
+
+    static readonly System.Globalization.CultureInfo German = new("de-DE");
+
+    // Accepts "1,5" and "1.5"; out of range or unparsable falls back to the default.
+    static double ParsePause(string text) =>
+        double.TryParse(text.Trim().Replace('.', ','), System.Globalization.NumberStyles.Float, German, out var v) && Settings.ValidPause(v)
+            ? v : new Settings().WheelToLivePauseSeconds;
 
     // Returns false (and applies nothing) while any color field is invalid.
     bool TryApply()
@@ -229,10 +242,13 @@ internal sealed class SettingsWindow : Window
             DefaultSort = (SortMode)Math.Max(0, defaultSort.SelectedIndex),
             LiveOnStart = liveOnStart.IsChecked == true,
             LiveMaxWaitSeconds = (int)maxWait.Value,
+            WheelToLive = wheelToLive.IsChecked == true,
+            WheelToLivePauseSeconds = ParsePause(wheelPause.Text),
             OpenFolderShows = (OpenFolderMode)Math.Max(0, openShows.SelectedIndex),
             QuickFolders = Enumerable.Range(0, Settings.QuickFolderCount)
                 .Select(i => new QuickFolder(slotNames[i].Text.Trim(), slotPaths[i].Text.Trim(), slotDialogs[i].IsChecked == true)).ToList(),
         };
+        wheelPause.Text = s.WheelToLivePauseSeconds.ToString("0.0#", German); // show the fallback if the input was invalid
         apply(s);
         try { s.Save(); }
         catch (Exception ex)

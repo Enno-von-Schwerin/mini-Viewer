@@ -49,7 +49,10 @@ public sealed class MainWindow : Window
     SortMode sort = SortMode.Name;
     bool live, autoFit = true, rightDown, fullscreen, spanned;
     double scale = 1, offX, offY;  // scale: image px -> physical px; offsets in physical px relative to the client area
-    int wheelAccum;
+    readonly WheelAccumulator wheel = new();
+    // Forward wheel notches at the last image (live off) count down to switching live mode on.
+    readonly WheelToLive wheelToLive = new(() => Uptime.Elapsed);
+    static readonly Stopwatch Uptime = Stopwatch.StartNew();
 
     // Viewport mapping: R = image rect at initial scale (screen px); the cursor position within R drives the crop.
     Rect refRect;
@@ -372,6 +375,7 @@ public sealed class MainWindow : Window
     void Load(string? path, bool fromLive = false)
     {
         int token = ++loadToken;
+        ResetWheelToLive(); // navigation, delete, folder open: the countdown starts over
         string? previous = currentPath;
         currentPath = path;
         if (path == null) { Clear("Keine Bilder im Ordner"); return; }
@@ -667,11 +671,20 @@ public sealed class MainWindow : Window
             ZoomTo(scale * Math.Pow(1.2, e.Delta / 120.0));
             return;
         }
-        // Accumulate so high-resolution wheels/touchpads step once per notch.
-        wheelAccum += e.Delta;
-        int notches = wheelAccum / 120;
-        wheelAccum -= notches * 120;
-        if (notches != 0) Step(settings.InvertWheel ? notches : -notches); // inversion affects navigation only
+        // Accumulate so high-resolution wheels/touchpads step once per notch; inversion affects navigation only.
+        int notches = wheel.Add(e.Delta);
+        int dir1 = settings.InvertWheel ? Math.Sign(notches) : -Math.Sign(notches);
+        for (int i = 0; i < Math.Abs(notches); i++) Step(dir1, fromWheel: true);
+    }
+
+    // Any key or mouse button cancels the wheel countdown to live mode.
+    protected override void OnPreviewKeyDown(KeyEventArgs e) { ResetWheelToLive(); base.OnPreviewKeyDown(e); }
+    protected override void OnPreviewMouseDown(MouseButtonEventArgs e) { ResetWheelToLive(); base.OnPreviewMouseDown(e); }
+
+    void ResetWheelToLive()
+    {
+        if (wheelToLive.Count > 0) { toastTimer.Stop(); toastBox.Visibility = Visibility.Collapsed; } // countdown message
+        wheelToLive.Reset();
     }
 
     protected override void OnMouseRightButtonDown(MouseButtonEventArgs e)
@@ -801,18 +814,27 @@ public sealed class MainWindow : Window
             Process.Start("explorer.exe", $"/select,\"{currentPath}\"");
     }
 
-    internal void Step(int delta)
+    internal void Step(int delta) => Step(delta, fromWheel: false);
+
+    void Step(int delta, bool fromWheel)
     {
         if (dir == null) return;
-        SetLive(false);
         string? next = DirectoryNavigator.Neighbor(dir, currentPath, currentTime, delta, sort);
-        if (next != null && bitmap != null && string.Equals(next, currentPath, StringComparison.OrdinalIgnoreCase))
+        bool atEnd = next != null && bitmap != null && string.Equals(next, currentPath, StringComparison.OrdinalIgnoreCase);
+        bool forwardWheelAtEnd = atEnd && fromWheel && delta > 0;
+        if (!(forwardWheelAtEnd && live)) SetLive(false); // scrolling on at the last image keeps live mode on
+        if (!atEnd) { Load(next); return; }
+        wheel.Clear(); // drop unusable wheel deltas so scrolling back does not lag
+        if (forwardWheelAtEnd)
         {
-            wheelAccum = 0; // drop unusable wheel deltas so scrolling back does not lag
-            ShowToast(delta > 0 ? "Letztes Bild" : "Erstes Bild");
+            wheelToLive.Pause = TimeSpan.FromSeconds(settings.WheelToLivePauseSeconds);
+            if (wheelToLive.AtLastImage(next!, live, settings.WheelToLive) is not string msg) { ToggleLive(); return; } // final step: like "L"
+            // Countdown messages replace each other and stay for the pause time (so they vanish when the counter expires).
+            ShowToast(msg, wheelToLive.Count > 0 ? (int)wheelToLive.Pause.TotalMilliseconds : 1500);
             return;
         }
-        Load(next);
+        ResetWheelToLive();
+        ShowToast(delta > 0 ? "Letztes Bild" : "Erstes Bild");
     }
 
     internal void ToggleSort()
@@ -833,6 +855,7 @@ public sealed class MainWindow : Window
         if (live == on) return;
         if (on && !StartWatcher()) return;
         if (!on) StopWatcher();
+        ResetWheelToLive();
         live = on;
         UpdateTitle();
         ShowToast(on ? "Live-Modus an" : "Live-Modus aus");

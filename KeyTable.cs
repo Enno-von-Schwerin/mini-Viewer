@@ -24,6 +24,7 @@ internal static class KeyTable
     public static readonly KeyEntry[] Entries =
     [
         new("Mausrad", "vorheriges/nächstes Bild (kein Umlauf am Anfang/Ende)", [], null),
+        new("Mausrad am letzten Bild weiter", "nach 5 Schritten Live-Modus ein (Pause zurücksetzen)", [], null),
         new("Rechte Maustaste + Mausrad / Strg + Mausrad", "Zoom (Punkt unter dem Mauszeiger bleibt stehen)", [], null),
         new("Maus bewegen", "bei Bild größer als die Fläche: Ausschnitt folgt der Maus (Bildrand = Rand von R, der Bildfläche in Ausgangsgröße)", [], null),
         new("Mittlere Maustaste", "1:1-Ansicht über alle Monitore umschalten (Maus bewegen = Ausschnitt verschieben)", [], null),
