@@ -10,7 +10,8 @@ internal enum OverlayPosition { TopLeft, TopRight, BottomLeft, BottomRight, Cent
 internal enum OpenFolderMode { Newest, First }
 
 /// <summary>Quick-access folder slot; empty Path = not configured.</summary>
-internal sealed record QuickFolder(string Name = "", string Path = "")
+/// <summary>FileDialog: a click opens a file dialog in the folder instead of showing the newest/first image.</summary>
+internal sealed record QuickFolder(string Name = "", string Path = "", bool FileDialog = false)
 {
     [JsonIgnore] public bool IsSet => Path.Length > 0;
     // Display name: configured name, else the folder's name (or the path itself for a drive root).
@@ -85,10 +86,14 @@ internal sealed class Settings
             s.LiveOnStart = Get(r, nameof(LiveOnStart), s.LiveOnStart);
             s.LiveMaxWaitSeconds = Get(r, nameof(LiveMaxWaitSeconds), s.LiveMaxWaitSeconds, v => v is >= 1 and <= 60);
             s.OpenFolderShows = Get(r, nameof(OpenFolderShows), s.OpenFolderShows, Enum.IsDefined);
+            // Former global "QuickFolderFileDialog" serves as the per-slot default when a slot has no own value.
+            bool legacyDialog = Get(r, "QuickFolderFileDialog", false);
             // Quick folders per slot: a broken entry becomes an empty slot; paths are not checked here (only on click).
             if (r.TryGetProperty(nameof(QuickFolders), out var q) && q.ValueKind == JsonValueKind.Array)
                 for (int i = 0; i < Math.Min(QuickFolderCount, q.GetArrayLength()); i++)
-                    s.QuickFolders[i] = new QuickFolder(Str(q[i], nameof(QuickFolder.Name)), Str(q[i], nameof(QuickFolder.Path)));
+                    s.QuickFolders[i] = new QuickFolder(Str(q[i], nameof(QuickFolder.Name)), Str(q[i], nameof(QuickFolder.Path)),
+                        q[i].ValueKind == JsonValueKind.Object && q[i].TryGetProperty(nameof(QuickFolder.FileDialog), out var fd)
+                            && fd.ValueKind is JsonValueKind.True or JsonValueKind.False ? fd.GetBoolean() : legacyDialog);
         }
         catch (Exception) { } // missing or unparsable file: defaults
         return s;

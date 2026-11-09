@@ -16,6 +16,7 @@ internal sealed class SettingsWindow : Window
     readonly TextBox[] slotNames = new TextBox[Settings.QuickFolderCount], slotPaths = new TextBox[Settings.QuickFolderCount];
     readonly CheckBox invertWheel = new() { Content = "Mausrad-Richtung beim Blättern umkehren" };
     readonly CheckBox liveOnStart = new() { Content = "Live-Modus beim Start aktivieren" };
+    readonly CheckBox[] slotDialogs = new CheckBox[Settings.QuickFolderCount];
     readonly Border preview = new() { Padding = new Thickness(12, 8, 12, 8), CornerRadius = new CornerRadius(6) };
     readonly TextBlock previewText = new() { Text = "Seed: 1234567890, Steps: 30\nÄÖÜ äöü ß – Beispieltext" };
     readonly Border previewBack = new() { Padding = new Thickness(12), Background = new LinearGradientBrush(Colors.White, Colors.SteelBlue, 0) };
@@ -77,7 +78,7 @@ internal sealed class SettingsWindow : Window
         {
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             MaxHeight = SystemParameters.WorkArea.Height * 0.9,
-            Content = new StackPanel { Margin = new Thickness(12), Width = 640, Children = { overlays, view, quickGroup, liveGroup, buttons } },
+            Content = new StackPanel { Margin = new Thickness(12), Width = 720, Children = { overlays, view, quickGroup, liveGroup, buttons } },
         };
         // Opened from an empty quick-access slot: scroll to the group and focus that slot's path field.
         if (focusSlot is int slot && slot >= 0 && slot < Settings.QuickFolderCount)
@@ -133,13 +134,19 @@ internal sealed class SettingsWindow : Window
             if (dlg.ShowDialog(this) == true) path.Text = dlg.FolderName;
         });
         browse.MinWidth = 32;
-        var clear = Button("Leeren", () => { name.Text = ""; path.Text = ""; });
+        var dialog = slotDialogs[i] = new CheckBox
+        {
+            Content = "Datei-Dialog", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 2, 0),
+            ToolTip = "Klick öffnet einen Datei-Dialog in diesem Ordner statt direkt ein Bild anzuzeigen",
+        };
+        var clear = Button("Leeren", () => { name.Text = ""; path.Text = ""; dialog.IsChecked = false; });
         clear.MinWidth = 64;
         var d = new DockPanel();
         DockPanel.SetDock(name, Dock.Left);
         DockPanel.SetDock(clear, Dock.Right);
         DockPanel.SetDock(browse, Dock.Right);
-        foreach (var c in new UIElement[] { name, clear, browse, path }) d.Children.Add(c); // path fills the rest
+        DockPanel.SetDock(dialog, Dock.Right);
+        foreach (var c in new UIElement[] { name, clear, dialog, browse, path }) d.Children.Add(c); // path fills the rest
         return Row($"Slot {i + 1}", d, 60);
     }
 
@@ -188,6 +195,7 @@ internal sealed class SettingsWindow : Window
         {
             slotNames[i].Text = s.QuickFolders[i].Name;
             slotPaths[i].Text = s.QuickFolders[i].Path;
+            slotDialogs[i].IsChecked = s.QuickFolders[i].FileDialog;
         }
         Refresh();
     }
@@ -223,7 +231,7 @@ internal sealed class SettingsWindow : Window
             LiveMaxWaitSeconds = (int)maxWait.Value,
             OpenFolderShows = (OpenFolderMode)Math.Max(0, openShows.SelectedIndex),
             QuickFolders = Enumerable.Range(0, Settings.QuickFolderCount)
-                .Select(i => new QuickFolder(slotNames[i].Text.Trim(), slotPaths[i].Text.Trim())).ToList(),
+                .Select(i => new QuickFolder(slotNames[i].Text.Trim(), slotPaths[i].Text.Trim(), slotDialogs[i].IsChecked == true)).ToList(),
         };
         apply(s);
         try { s.Save(); }

@@ -61,8 +61,11 @@ public sealed class MainWindow : Window
     const double AnimMs = 100;
 
     readonly Grid overlayHost = new(); // holds all overlays; restricted to one monitor while spanned
-    Native.WINDOWPLACEMENT placementBeforeFullscreen;
-    (bool Fullscreen, Native.WINDOWPLACEMENT Placement, Rect Bounds, double Scale, bool AutoFit) beforeSpan;
+    // Window state before fullscreen/spanned: exact bounds (physical px), maximized flag, and the placement
+    // (only used for maximized windows, to keep their normal bounds).
+    readonly record struct WindowedState(Rect Bounds, bool Maximized, Native.WINDOWPLACEMENT Placement);
+    WindowedState windowedBeforeFullscreen;
+    (bool Fullscreen, WindowedState Window, double Scale, bool AutoFit) beforeSpan;
     IntPtr Hwnd => new WindowInteropHelper(this).Handle;
 
     public MainWindow(string? path)
@@ -231,7 +234,18 @@ public sealed class MainWindow : Window
         var q = settings.QuickFolders[index];
         if (!q.IsSet) { OpenSettings(index); return; }
         if (!Directory.Exists(q.Path)) { ShowToast("Ordner nicht gefunden", 3000); return; }
-        OpenFolderPath(q.Path);
+        if (q.FileDialog) OpenFileIn(q.Path); else OpenFolderPath(q.Path);
+    }
+
+    // Quick access with "Datei-Dialog öffnen": pick an image in the folder; cancel changes nothing.
+    void OpenFileIn(string folder)
+    {
+        var dlg = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Bild öffnen", InitialDirectory = folder, Multiselect = false,
+            Filter = "Bilder (*.jpg;*.jpeg;*.png)|*.jpg;*.jpeg;*.png",
+        };
+        if (dlg.ShowDialog(this) == true) ShowFileIn(Path.GetDirectoryName(dlg.FileName)!, dlg.FileName);
     }
 
     static Grid BuildHelp()
@@ -579,22 +593,32 @@ public sealed class MainWindow : Window
         Topmost = on;
     }
 
+    // Captures the windowed state before the window is moved (fullscreen/spanned).
+    WindowedState SaveWindowed() =>
+        new(Native.WindowRect(Hwnd), WindowState == WindowState.Maximized, Native.GetPlacement(Hwnd));
+
+    void RestoreWindowed(WindowedState s)
+    {
+        SetBorderless(false);
+        // Maximized: the placement restores the maximized state on its monitor and keeps the normal bounds.
+        // Normal (incl. snapped): restore the exact rect from GetWindowRect. The placement's rcNormalPosition must
+        // not be used here: for a snapped window it is the pre-snap restore rect, not the visible bounds.
+        if (s.Maximized) Native.SetPlacement(Hwnd, s.Placement);
+        else Native.Place(Hwnd, s.Bounds);
+    }
+
     internal void ToggleFullscreen()
     {
         if (spanned) { ToggleSpanned(); return; } // F11 while spanned returns to the previous state first
         fullscreen = !fullscreen;
         if (fullscreen)
         {
-            placementBeforeFullscreen = Native.GetPlacement(Hwnd);
+            windowedBeforeFullscreen = SaveWindowed();
             var monitor = Native.MonitorOfWindow(Hwnd); // read before changing anything
             SetBorderless(true);
             Native.Place(Hwnd, monitor);
         }
-        else
-        {
-            SetBorderless(false);
-            Native.SetPlacement(Hwnd, placementBeforeFullscreen);
-        }
+        else RestoreWindowed(windowedBeforeFullscreen);
         Relayout();
     }
 
@@ -606,7 +630,7 @@ public sealed class MainWindow : Window
             if (bitmap == null) return;
             Relayout(); // make sure R is current
             HideMenu();
-            beforeSpan = (fullscreen, Native.GetPlacement(Hwnd), Native.WindowRect(Hwnd), scale, autoFit);
+            beforeSpan = (fullscreen, SaveWindowed(), scale, autoFit); // before the window is moved
             // Reference monitor M (contains R): fixed while spanned; used for image positioning and overlays.
             var m = spanMonitor = Native.MonitorOfRect(refRect);
             spanned = true;
@@ -625,12 +649,8 @@ public sealed class MainWindow : Window
             spanned = false;
             (scale, autoFit) = (b.Scale, b.AutoFit);
             overlayHost.Margin = new Thickness(0);
-            if (b.Fullscreen) Native.Place(Hwnd, b.Bounds);
-            else
-            {
-                SetBorderless(false);
-                Native.SetPlacement(Hwnd, b.Placement);
-            }
+            if (b.Fullscreen) Native.Place(Hwnd, b.Window.Bounds); // fullscreen on the original monitor
+            else RestoreWindowed(b.Window);
         }
         animStart = null;
         Relayout();
@@ -746,9 +766,15 @@ public sealed class MainWindow : Window
             ? DirectoryNavigator.Newest(folder)
             : DirectoryNavigator.Neighbor(folder, null, default, 1, sort);
         if (pick == null) { ShowToast("Keine Bilder im Ordner", 3000); return; }
+        ShowFileIn(folder, pick);
+    }
+
+    // Switches the browsing folder (lazy navigation from here on) and shows the given image.
+    void ShowFileIn(string folder, string file)
+    {
         dir = folder;
         if (live && !StartWatcher()) SetLive(false); // re-target the watcher to the new folder
-        Load(pick);
+        Load(file);
     }
 
     internal void ShowInExplorer()

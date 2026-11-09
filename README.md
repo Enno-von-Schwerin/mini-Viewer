@@ -36,6 +36,8 @@ Bis zu 5 Ordner, einzurichten unter Einstellungen > „Schnellzugriff-Ordner“ 
 Ohne geladenes Bild (Start ohne Argument oder nach dem Löschen des letzten Bildes) erscheinen sie als Kacheln am
 unteren Fensterrand; Klick öffnet den Ordner, Klick auf einen leeren Slot öffnet die Einstellungen.
 Außerdem im Menü unter Datei > Schnellzugriff. Existiert ein Ordner nicht mehr, erscheint „Ordner nicht gefunden“.
+Pro Slot lässt sich „Datei-Dialog“ ankreuzen (Standard: aus): Dann öffnet ein Klick auf diesen Slot einen
+Datei-Dialog in seinem Ordner; das gewählte Bild wird angezeigt und von dort aus weiter geblättert. Abbrechen ändert nichts.
 
 ## Build / Publish
 
