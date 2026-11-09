@@ -54,7 +54,10 @@ internal static class DirectoryNavigator
         return ~(i < 0 ? list.Count : i);
     }
 
-    /// <summary>Neighbor at offset delta with wrap-around; null if the directory has no images.</summary>
+    /// <summary>
+    /// Neighbor at offset delta, clamped to the first/last image (no wrap-around), so at either end the current
+    /// file itself is returned. Null if the directory has no images.
+    /// </summary>
     public static string? Neighbor(string dir, string? current, DateTime time, int delta, SortMode mode)
     {
         var list = List(dir, mode);
@@ -64,7 +67,7 @@ internal static class DirectoryNavigator
         int i = Locate(list, current, time, mode);
         // Missing file: the insertion point sits between two neighbors, so "next" is ~i and "previous" is ~i - 1.
         int target = i >= 0 ? i + delta : (delta > 0 ? ~i + delta - 1 : ~i + delta);
-        return list[(target % n + n) % n].Path;
+        return list[Math.Clamp(target, 0, n - 1)].Path;
     }
 
     /// <summary>File to show after 'removed' was deleted: the next one, or the previous one if it was the last.</summary>

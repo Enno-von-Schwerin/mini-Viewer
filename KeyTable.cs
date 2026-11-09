@@ -14,20 +14,22 @@ internal static class KeyTable
     // Entries referenced by the menu (declared before Entries so they are initialized first).
     public static readonly KeyEntry OpenFolder = new("Strg+O", "Ordner öffnen", [Key.O], (w, _) => w.OpenFolder(), ModifierKeys.Control);
     public static readonly KeyEntry ShowInExplorer = new("Strg+E", "im Explorer anzeigen", [Key.E], (w, _) => w.ShowInExplorer(), ModifierKeys.Control);
+    public static readonly KeyEntry OpenSettings = new("Strg+,", "Einstellungen", [Key.OemComma], (w, _) => w.OpenSettings(), ModifierKeys.Control);
     public static readonly KeyEntry Sort = new("O", "Sortierung Name/Datum", [Key.O], (w, _) => w.ToggleSort());
     public static readonly KeyEntry Live = new("L", "Live-Modus", [Key.L], (w, _) => w.ToggleLive());
     public static readonly KeyEntry Meta = new("I", "Metadaten", [Key.I], (w, _) => w.ToggleMeta());
-    public static readonly KeyEntry Fullscreen = new("F11", "Vollbild", [Key.F11], (w, _) => w.ToggleFullscreen());
+    public static readonly KeyEntry Fullscreen = new("F11", "Vollbild auf dem aktuellen Monitor (in 1:1 über alle Monitore: zurück)", [Key.F11], (w, _) => w.ToggleFullscreen());
     public static readonly KeyEntry Help = new("F1 / H", "diese Hilfe", [Key.F1, Key.H], (w, _) => w.ToggleHelp());
 
     public static readonly KeyEntry[] Entries =
     [
-        new("Mausrad", "vorheriges/nächstes Bild", [], null),
-        new("Rechte Maustaste + Mausrad / Strg + Mausrad", "Zoom (zum Mauszeiger)", [], null),
-        new("Linksklick", "1:1-Ansicht umschalten (Maus bewegen = Ausschnitt verschieben)", [], null),
-        new("Maus an den oberen Rand", "Menü einblenden (nicht bei 1:1 oder vergrößertem Bild)", [], null),
+        new("Mausrad", "vorheriges/nächstes Bild (kein Umlauf am Anfang/Ende)", [], null),
+        new("Rechte Maustaste + Mausrad / Strg + Mausrad", "Zoom (Punkt unter dem Mauszeiger bleibt stehen)", [], null),
+        new("Maus bewegen", "bei Bild größer als die Fläche: Ausschnitt folgt der Maus (Bildrand = Rand des Mausbereichs)", [], null),
+        new("Linksklick", "1:1 über alle Monitore umschalten; erneuter Klick = zurück", [], null),
+        new("Maus an den oberen Rand", "Menü einblenden (nicht bei vergrößertem Bild oder 1:1 über alle Monitore)", [], null),
         new("0", "Ausgangsgröße", [Key.D0, Key.NumPad0], (w, _) => w.ResetZoom()),
-        new("1", "100 %", [Key.D1, Key.NumPad1], (w, _) => w.ZoomTo100()),
+        new("1", "Zoom 100 % (1 Bildpixel = 1 Bildschirmpixel) im aktuellen Fenster", [Key.D1, Key.NumPad1], (w, _) => w.ZoomTo100()),
         new("Links / Rechts", "vorheriges/nächstes Bild", [Key.Left, Key.Right], (w, k) => w.Step(k == Key.Left ? -1 : 1)),
         Sort,
         Live,
@@ -38,9 +40,10 @@ internal static class KeyTable
         new("Entf", "in den Papierkorb", [Key.Delete], (w, _) => w.DeleteCurrent()),
         OpenFolder,
         ShowInExplorer,
+        OpenSettings,
         new("Alt / F10", "Menü einblenden", [Key.LeftAlt, Key.RightAlt, Key.F10], (w, _) => w.ToggleMenuFromKeyboard()),
         Fullscreen,
-        new("Esc", "schließen (offenes Menü/Overlay zuerst)", [Key.Escape], (w, _) => w.Escape()),
+        new("Esc", "Menü/Overlay schließen, sonst 1:1 über alle Monitore bzw. Vollbild verlassen, sonst beenden", [Key.Escape], (w, _) => w.Escape()),
         Help,
     ];
 

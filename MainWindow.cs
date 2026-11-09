@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
@@ -17,20 +18,12 @@ public sealed class MainWindow : Window
 {
     readonly Canvas canvas = new() { ClipToBounds = true, Background = Brushes.Black };
     readonly Image image = new() { Stretch = Stretch.Fill };
-    readonly TextBlock emptyText = new()
-    {
-        Foreground = Brushes.Gray, FontSize = 16, IsHitTestVisible = false,
-        HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
-    };
-    readonly TextBlock toast = new()
-    {
-        Foreground = Brushes.White, Background = new SolidColorBrush(Color.FromArgb(0xB0, 0, 0, 0)),
-        Padding = new Thickness(8, 4, 8, 4), Margin = new Thickness(10), IsHitTestVisible = false,
-        HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom,
-        Visibility = Visibility.Collapsed,
-    };
-    readonly TextBlock metaText = new() { FontFamily = new FontFamily("Consolas"), FontSize = 13, TextWrapping = TextWrapping.Wrap };
-    readonly Border metaOverlay, helpOverlay;
+    readonly TextBlock emptyText = new() { TextWrapping = TextWrapping.Wrap };
+    readonly TextBlock toast = new();
+    readonly TextBlock metaText = new() { TextWrapping = TextWrapping.Wrap };
+    // All overlays/messages share one style from the settings (see ApplySettings).
+    readonly Border metaOverlay, helpOverlay, emptyBox, toastBox;
+    Settings settings = Settings.Load();
     readonly Menu menu;
     readonly MenuItem liveItem, metaItem;
     readonly DispatcherTimer toastTimer = new();
@@ -45,12 +38,22 @@ public sealed class MainWindow : Window
     string? parameters;
     int loadToken;
     SortMode sort = SortMode.Name;
-    bool live, autoFit = true, oneToOne, rightDown, fullscreen;
-    double scale = 1, offX, offY;  // scale: image px -> device px; offsets in device px
-    (double Scale, double X, double Y, bool AutoFit) beforeOneToOne;
-    Point mouse;                   // last mouse position in device px
+    bool live, autoFit = true, rightDown, fullscreen, spanned;
+    double scale = 1, offX, offY;  // scale: image px -> physical px; offsets in physical px relative to the client area
     int wheelAccum;
-    WindowState stateBeforeFullscreen;
+
+    // Viewport mapping: R = image rect at initial scale (screen px), E = R grown by settings.MouseMargin % per side.
+    Rect refRect;
+    bool reloadCurrent;            // live mode: pending debounce reloads the current file (Changed) instead of the newest
+    readonly DispatcherTimer tracker = new(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(15) };
+    DateTime? animStart;           // zoom transition: from (animFromX, animFromY) to the mapped offset over AnimMs
+    double animFromX, animFromY;
+    const double AnimMs = 100;
+
+    readonly Grid overlayHost = new(); // holds all overlays; restricted to one monitor while spanned
+    Native.WINDOWPLACEMENT placementBeforeFullscreen;
+    (bool Fullscreen, Native.WINDOWPLACEMENT Placement, Rect Bounds, double Scale, bool AutoFit) beforeSpan;
+    IntPtr Hwnd => new WindowInteropHelper(this).Handle;
 
     public MainWindow(string? path)
     {
@@ -63,21 +66,39 @@ public sealed class MainWindow : Window
 
         canvas.Children.Add(image);
         metaOverlay = Overlay(metaText);
-        metaOverlay.VerticalAlignment = VerticalAlignment.Bottom;
-        metaOverlay.Margin = new Thickness(16, 16, 16, 52);
+        metaOverlay.Margin = new Thickness(16);
         helpOverlay = Overlay(BuildHelp());
-        helpOverlay.HorizontalAlignment = HorizontalAlignment.Center;
-        helpOverlay.VerticalAlignment = VerticalAlignment.Center;
-        helpOverlay.MaxWidth = 760;
+        emptyBox = Overlay(emptyText);
+        toastBox = Overlay(toast);
+        toastBox.Padding = new Thickness(8, 4, 8, 4);
+        toastBox.Margin = new Thickness(10);
+        toastBox.HorizontalAlignment = HorizontalAlignment.Right;
+        toastBox.VerticalAlignment = VerticalAlignment.Bottom;
         menu = BuildMenu(out liveItem, out metaItem);
-        // The menu is an overlay in the same grid cell, so it never changes the image area size.
-        var root = new Grid();
-        foreach (var e in new UIElement[] { canvas, emptyText, metaOverlay, helpOverlay, menu, toast }) root.Children.Add(e);
-        Content = root;
+        // Menu and overlays live in a layer above the canvas, so they never change the image area size.
+        foreach (var e in new UIElement[] { emptyBox, metaOverlay, helpOverlay, menu, toastBox }) overlayHost.Children.Add(e);
+        overlayHost.SizeChanged += (_, _) =>
+        {
+            metaOverlay.MaxWidth = Math.Max(200, overlayHost.ActualWidth * 0.6);
+            helpOverlay.MaxWidth = Math.Max(200, overlayHost.ActualWidth - 32);
+        };
+        sort = settings.DefaultSort;
+        ApplySettings(settings);
+        Content = new Grid { Children = { canvas, overlayHost } };
+        RenderOptions.SetBitmapScalingMode(image, BitmapScalingMode.HighQuality);
+        image.SnapsToDevicePixels = true;
 
         canvas.SizeChanged += (_, _) => Relayout();
-        toastTimer.Tick += (_, _) => { toastTimer.Stop(); toast.Visibility = Visibility.Collapsed; };
-        liveDebounce.Tick += (_, _) => { liveDebounce.Stop(); JumpToNewest(); };
+        LocationChanged += (_, _) => Relayout(); // R is in screen coordinates
+        tracker.Tick += (_, _) => Track();
+        toastTimer.Tick += (_, _) => { toastTimer.Stop(); toastBox.Visibility = Visibility.Collapsed; };
+        liveDebounce.Tick += (_, _) =>
+        {
+            liveDebounce.Stop();
+            if (reloadCurrent && currentPath != null) Load(currentPath, fromLive: true);
+            else JumpToNewest();
+            reloadCurrent = false;
+        };
         Closed += (_, _) => watcher?.Dispose();
         Deactivated += (_, _) => { if (!AnySubmenuOpen) HideMenu(); };
 
@@ -91,21 +112,50 @@ public sealed class MainWindow : Window
             path = Path.GetFullPath(path);
             dir = Path.GetDirectoryName(path) ?? Environment.CurrentDirectory;
             Load(path);
+            if (settings.LiveOnStart) SetLive(true); // watch only; the requested file stays shown
         }
         ShowToast("F1 = Hilfe", 3000);
     }
 
-    static Border Overlay(UIElement child)
+    static Border Overlay(UIElement child) => new()
     {
-        var b = new Border
+        Child = child, Padding = new Thickness(16, 12, 16, 12), CornerRadius = new CornerRadius(6),
+        HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
+        IsHitTestVisible = false, Visibility = Visibility.Collapsed,
+    };
+
+    internal static Brush OverlayBrush(Color c, int transparencyPercent) =>
+        new SolidColorBrush(Color.FromArgb((byte)Math.Round(255 * (100 - transparencyPercent) / 100.0), c.R, c.G, c.B));
+
+    // Applies settings live: shared overlay style, image-area background, metadata position, mouse margin.
+    void ApplySettings(Settings s)
+    {
+        settings = s;
+        var fg = new SolidColorBrush(Settings.ParseColor(s.FontColor) ?? Colors.White);
+        var bg = OverlayBrush(Settings.ParseColor(s.OverlayBackground) ?? Colors.Black, s.OverlayTransparency);
+        var font = new FontFamily(s.FontFamily);
+        foreach (var b in new[] { metaOverlay, helpOverlay, emptyBox, toastBox })
         {
-            Child = child, Padding = new Thickness(16, 12, 16, 12), CornerRadius = new CornerRadius(6),
-            Background = new SolidColorBrush(Color.FromArgb(0xC8, 0x10, 0x10, 0x10)),
-            IsHitTestVisible = false, Visibility = Visibility.Collapsed,
+            b.Background = bg;
+            TextElement.SetForeground(b, fg);
+            TextElement.SetFontFamily(b, font);
+            TextElement.SetFontSize(b, s.FontSize);
+        }
+        var area = new SolidColorBrush(Settings.ParseColor(s.ImageBackground) ?? Colors.Black);
+        canvas.Background = area;
+        Background = area;
+        (metaOverlay.HorizontalAlignment, metaOverlay.VerticalAlignment) = s.MetadataPosition switch
+        {
+            OverlayPosition.TopRight => (HorizontalAlignment.Right, VerticalAlignment.Top),
+            OverlayPosition.BottomLeft => (HorizontalAlignment.Left, VerticalAlignment.Bottom),
+            OverlayPosition.BottomRight => (HorizontalAlignment.Right, VerticalAlignment.Bottom),
+            OverlayPosition.Center => (HorizontalAlignment.Center, VerticalAlignment.Center),
+            _ => (HorizontalAlignment.Left, VerticalAlignment.Top),
         };
-        TextElement.SetForeground(b, Brushes.White);
-        return b;
+        Relayout();
     }
+
+    internal void OpenSettings() => new SettingsWindow(settings.Clone(), ApplySettings) { Owner = this }.ShowDialog();
 
     static Grid BuildHelp()
     {
@@ -115,7 +165,7 @@ public sealed class MainWindow : Window
         void Add(UIElement e, int row, int col) { Grid.SetRow(e, row); Grid.SetColumn(e, col); g.Children.Add(e); }
 
         g.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        var header = new TextBlock { Text = "SimpleViewer – Hilfe", FontSize = 16, FontWeight = FontWeights.Bold, Margin = new Thickness(0, 0, 0, 10) };
+        var header = new TextBlock { Text = "SimpleViewer – Hilfe", FontWeight = FontWeights.Bold, Margin = new Thickness(0, 0, 0, 10) };
         Grid.SetColumnSpan(header, 2);
         Add(header, 0, 0);
         foreach (var k in KeyTable.Entries)
@@ -160,7 +210,15 @@ public sealed class MainWindow : Window
             Visibility = Visibility.Collapsed,
             Items =
             {
-                new MenuItem { Header = "Datei", Items = { Cmd("Ordner öffnen...", KeyTable.OpenFolder), Cmd("Im Explorer anzeigen", KeyTable.ShowInExplorer), exit } },
+                new MenuItem
+                {
+                    Header = "Datei",
+                    Items =
+                    {
+                        Cmd("Ordner öffnen...", KeyTable.OpenFolder), Cmd("Im Explorer anzeigen", KeyTable.ShowInExplorer),
+                        Cmd("Einstellungen...", KeyTable.OpenSettings), exit,
+                    },
+                },
                 view,
                 help,
             },
@@ -197,6 +255,7 @@ public sealed class MainWindow : Window
 
     internal void ToggleMenuFromKeyboard()
     {
+        if (spanned) return; // no menu while spanned
         if (menuByKeyboard || menu.IsKeyboardFocusWithin)
         {
             if (MenuPinned) Keyboard.Focus(this); else HideMenu();
@@ -208,11 +267,11 @@ public sealed class MainWindow : Window
         (menu.Items[0] as MenuItem)?.Focus();
     }
 
-    // While the image is zoomed beyond the window (or in 1:1), the top edge is used to inspect the image border.
+    // While the image is larger than the image area (or spanned), the top edge is used to inspect the image border.
     bool ImageExceedsView()
     {
         if (bitmap == null) return false;
-        if (oneToOne) return true;
+        if (spanned) return true;
         var v = View;
         return bitmap.PixelWidth * scale > v.Width + 0.5 || bitmap.PixelHeight * scale > v.Height + 0.5;
     }
@@ -225,10 +284,12 @@ public sealed class MainWindow : Window
         string? previous = currentPath;
         currentPath = path;
         if (path == null) { Clear("Keine Bilder im Ordner"); return; }
+        // Files may still be being written: retry every 200 ms (live mode: up to the configured limit).
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(fromLive ? settings.LiveMaxWaitSeconds : 1);
 
         Task.Run(async () =>
         {
-            for (int attempt = 0; ; attempt++)
+            while (true)
             {
                 if (Volatile.Read(ref loadToken) != token) return; // superseded by a newer load
                 try
@@ -237,7 +298,7 @@ public sealed class MainWindow : Window
                     _ = Dispatcher.InvokeAsync(() => Show(token, r.Bitmap, r.Time, r.Parameters));
                     return;
                 }
-                catch when (attempt < 5) { await Task.Delay(200); } // file may still be being written
+                catch when (DateTime.UtcNow < deadline) { await Task.Delay(200); }
                 catch
                 {
                     _ = Dispatcher.InvokeAsync(() => LoadFailed(token, path, previous, fromLive));
@@ -269,10 +330,11 @@ public sealed class MainWindow : Window
         currentTime = time;
         parameters = meta;
         image.Source = bmp;
-        emptyText.Text = "";
+        emptyBox.Visibility = Visibility.Collapsed;
         metaText.Text = meta ?? "keine Metadaten";
-        oneToOne = false;
-        autoFit = true;
+        // Spanned mode stays active across navigation (1:1, R fixed); otherwise start at the initial scale.
+        if (spanned) scale = 1; else autoFit = true;
+        animStart = null;
         Relayout();
         UpdateTitle();
         if (!everLoaded)
@@ -291,10 +353,12 @@ public sealed class MainWindow : Window
 
     void Clear(string message)
     {
+        if (spanned) ToggleSpanned(); // nothing to span without an image
         bitmap = null;
         parameters = null;
         image.Source = null;
         emptyText.Text = message;
+        emptyBox.Visibility = Visibility.Visible;
         metaText.Text = "keine Metadaten";
         UpdateTitle();
     }
@@ -310,7 +374,7 @@ public sealed class MainWindow : Window
     void ShowToast(string text, int ms = 1500)
     {
         toast.Text = text;
-        toast.Visibility = Visibility.Visible;
+        toastBox.Visibility = Visibility.Visible;
         toastTimer.Stop();
         toastTimer.Interval = TimeSpan.FromMilliseconds(ms);
         toastTimer.Start();
@@ -321,37 +385,61 @@ public sealed class MainWindow : Window
     double Dpi => VisualTreeHelper.GetDpi(this).DpiScaleX;
     Size View => new(canvas.ActualWidth * Dpi, canvas.ActualHeight * Dpi);
 
+    // Client area origin in physical screen pixels.
+    Point ClientOrigin => PresentationSource.FromVisual(canvas) != null ? canvas.PointToScreen(new Point(0, 0)) : default;
+
+    double InitialScale(Size area) =>
+        Math.Min(1, Math.Min(area.Width / bitmap!.PixelWidth, area.Height / bitmap.PixelHeight));
+
     void Relayout()
     {
         if (bitmap == null) return;
         var v = View;
         if (v.Width <= 0 || v.Height <= 0) return;
-        if (oneToOne) PanOneToOne();
-        else
+        if (!spanned)
         {
-            if (autoFit) scale = Math.Min(1, Math.Min(v.Width / bitmap.PixelWidth, v.Height / bitmap.PixelHeight));
-            Clamp();
+            // R: image rect at the initial scale, centered in the client area. Fixed while spanned.
+            double s0 = InitialScale(v), w = bitmap.PixelWidth * s0, h = bitmap.PixelHeight * s0;
+            var o = ClientOrigin;
+            refRect = new Rect(o.X + (v.Width - w) / 2, o.Y + (v.Height - h) / 2, w, h);
+            if (autoFit) scale = s0;
         }
-        Apply();
+        Track();
     }
 
-    // Center along an axis if the image is smaller than the view, otherwise keep the view covered.
-    void Clamp()
+    // Offset the image should have: cursor-mapped via E on axes where it exceeds the area, else centered on R.
+    (double X, double Y) MappedOffset()
     {
         var v = View;
-        double w = bitmap!.PixelWidth * scale, h = bitmap.PixelHeight * scale;
-        offX = w <= v.Width ? (v.Width - w) / 2 : Math.Clamp(offX, v.Width - w, 0);
-        offY = h <= v.Height ? (v.Height - h) / 2 : Math.Clamp(offY, v.Height - h, 0);
+        var o = ClientOrigin;
+        var c = Native.CursorPos();
+        var r = refRect;
+        double m = settings.MouseMargin / 100.0;
+        var e = Rect.Inflate(r, r.Width * m, r.Height * m);
+        static double Axis(double img, double area, double cursor, double eStart, double eSize, double rCenter) =>
+            img > area
+                ? -Math.Clamp(eSize > 0 ? (cursor - eStart) / eSize : 0.5, 0, 1) * (img - area)
+                : Math.Clamp(rCenter - img / 2, 0, area - img);
+        return (Axis(bitmap!.PixelWidth * scale, v.Width, c.X, e.X, e.Width, r.X + r.Width / 2 - o.X),
+                Axis(bitmap.PixelHeight * scale, v.Height, c.Y, e.Y, e.Height, r.Y + r.Height / 2 - o.Y));
     }
 
-    // 1:1 crop follows the mouse proportionally: view edge = image edge.
-    void PanOneToOne()
+    // Updates the offset from the cursor (polled, so it also works outside the window) and runs the zoom transition.
+    void Track()
     {
-        var v = View;
-        double w = bitmap!.PixelWidth, h = bitmap.PixelHeight;
-        scale = 1;
-        offX = w <= v.Width ? (v.Width - w) / 2 : -Math.Clamp(mouse.X / v.Width, 0, 1) * (w - v.Width);
-        offY = h <= v.Height ? (v.Height - h) / 2 : -Math.Clamp(mouse.Y / v.Height, 0, 1) * (h - v.Height);
+        if (bitmap == null) { tracker.Stop(); return; }
+        var (x, y) = MappedOffset();
+        if (animStart is DateTime start)
+        {
+            double k = (DateTime.UtcNow - start).TotalMilliseconds / AnimMs;
+            if (k >= 1) animStart = null;
+            else { x = animFromX + (x - animFromX) * k; y = animFromY + (y - animFromY) * k; }
+        }
+        if (x != offX || y != offY || image.Width != bitmap.PixelWidth * scale / Dpi) { offX = x; offY = y; Apply(); }
+        // Polling is only needed while the crop depends on the cursor or a transition is running.
+        bool needed = animStart != null || (ImageExceedsView() && (IsActive || spanned));
+        if (needed && !tracker.IsEnabled) tracker.Start();
+        else if (!needed) tracker.Stop();
     }
 
     void Apply()
@@ -365,40 +453,99 @@ public sealed class MainWindow : Window
             Math.Abs(scale - 1) < 1e-9 ? BitmapScalingMode.NearestNeighbor : BitmapScalingMode.HighQuality);
     }
 
-    void ZoomAt(Point p, double newScale)
+    // Keeps the image point under the cursor stable, then hands over to the mapping with a short transition.
+    void ZoomTo(double newScale, bool fit = false)
     {
         if (bitmap == null) return;
         newScale = Math.Clamp(newScale, 0.02, 50);
-        oneToOne = false;
-        autoFit = false;
-        offX = p.X - (p.X - offX) * newScale / scale;
-        offY = p.Y - (p.Y - offY) * newScale / scale;
+        var c = Native.CursorPos();
+        var o = ClientOrigin;
+        double px = c.X - o.X, py = c.Y - o.Y;
+        offX = px - (px - offX) * newScale / scale;
+        offY = py - (py - offY) * newScale / scale;
         scale = newScale;
-        Clamp();
+        autoFit = fit;
+        animFromX = offX;
+        animFromY = offY;
+        animStart = DateTime.UtcNow;
         Apply();
+        Track();
     }
 
     internal void ResetZoom()
     {
-        oneToOne = false;
-        autoFit = true;
+        if (bitmap != null) ZoomTo(InitialScale(View), fit: !spanned);
+    }
+
+    internal void ZoomTo100() => ZoomTo(1);
+
+    // ---------- Fullscreen / spanned ----------
+
+    void SetBorderless(bool on)
+    {
+        if (on && WindowState != WindowState.Normal) WindowState = WindowState.Normal;
+        WindowStyle = on ? WindowStyle.None : WindowStyle.SingleBorderWindow;
+        ResizeMode = on ? ResizeMode.NoResize : ResizeMode.CanResize;
+        Topmost = on;
+    }
+
+    internal void ToggleFullscreen()
+    {
+        if (spanned) { ToggleSpanned(); return; } // F11 while spanned returns to the previous state first
+        fullscreen = !fullscreen;
+        if (fullscreen)
+        {
+            placementBeforeFullscreen = Native.GetPlacement(Hwnd);
+            var monitor = Native.MonitorOfWindow(Hwnd); // read before changing anything
+            SetBorderless(true);
+            Native.Place(Hwnd, monitor);
+        }
+        else
+        {
+            SetBorderless(false);
+            Native.SetPlacement(Hwnd, placementBeforeFullscreen);
+        }
         Relayout();
     }
 
-    internal void ZoomTo100()
+    // Spanned 1:1: the window covers the whole virtual desktop; R/E stay where they were.
+    internal void ToggleSpanned()
     {
-        var v = View;
-        ZoomAt(new Point(v.Width / 2, v.Height / 2), 1);
+        if (!spanned)
+        {
+            if (bitmap == null) return;
+            Relayout(); // make sure R is current
+            HideMenu();
+            beforeSpan = (fullscreen, Native.GetPlacement(Hwnd), Native.WindowRect(Hwnd), scale, autoFit);
+            spanned = true;
+            scale = 1;
+            autoFit = false;
+            var vs = Native.VirtualScreen();
+            SetBorderless(true);
+            Native.Place(Hwnd, vs);
+            // Keep overlays inside the monitor that contains R (the bounding box may have areas without a monitor).
+            var m = Native.MonitorOfRect(refRect);
+            double d = Dpi;
+            overlayHost.Margin = new Thickness((m.Left - vs.Left) / d, (m.Top - vs.Top) / d, (vs.Right - m.Right) / d, (vs.Bottom - m.Bottom) / d);
+        }
+        else
+        {
+            var b = beforeSpan;
+            spanned = false;
+            (scale, autoFit) = (b.Scale, b.AutoFit);
+            overlayHost.Margin = new Thickness(0);
+            if (b.Fullscreen) Native.Place(Hwnd, b.Bounds);
+            else
+            {
+                SetBorderless(false);
+                Native.SetPlacement(Hwnd, b.Placement);
+            }
+        }
+        animStart = null;
+        Relayout();
     }
 
     // ---------- Mouse ----------
-
-    Point DevicePos(MouseEventArgs e)
-    {
-        var p = e.GetPosition(canvas);
-        double d = Dpi;
-        return new Point(p.X * d, p.Y * d);
-    }
 
     protected override void OnMouseWheel(MouseWheelEventArgs e)
     {
@@ -406,14 +553,14 @@ public sealed class MainWindow : Window
         if (MenuUnderMouse) return;
         if (rightDown || (Keyboard.Modifiers & ModifierKeys.Control) != 0)
         {
-            ZoomAt(DevicePos(e), scale * Math.Pow(1.2, e.Delta / 120.0));
+            ZoomTo(scale * Math.Pow(1.2, e.Delta / 120.0));
             return;
         }
         // Accumulate so high-resolution wheels/touchpads step once per notch.
         wheelAccum += e.Delta;
         int notches = wheelAccum / 120;
         wheelAccum -= notches * 120;
-        if (notches != 0) Step(-notches);
+        if (notches != 0) Step(settings.InvertWheel ? notches : -notches); // inversion affects navigation only
     }
 
     protected override void OnMouseRightButtonDown(MouseButtonEventArgs e)
@@ -440,27 +587,19 @@ public sealed class MainWindow : Window
     {
         if (MenuUnderMouse) return;
         HideMenu(); // a click outside closes a keyboard-opened menu
-        if (bitmap == null) return;
-        mouse = DevicePos(e);
-        if (!oneToOne)
-        {
-            beforeOneToOne = (scale, offX, offY, autoFit);
-            oneToOne = true;
-        }
-        else
-        {
-            oneToOne = false;
-            (scale, offX, offY, autoFit) = beforeOneToOne;
-        }
-        Relayout();
+        ToggleSpanned();
     }
 
     protected override void OnMouseMove(MouseEventArgs e)
     {
-        mouse = DevicePos(e);
-        if (oneToOne && bitmap != null) { PanOneToOne(); Apply(); }
         if (menu.Visibility == Visibility.Visible) HideMenuIfIdle();
-        else if (e.GetPosition(canvas).Y <= 8 && !ImageExceedsView()) menu.Visibility = Visibility.Visible;
+        else if (!spanned && e.GetPosition(canvas).Y <= 8 && !ImageExceedsView()) menu.Visibility = Visibility.Visible;
+    }
+
+    protected override void OnActivated(EventArgs e)
+    {
+        base.OnActivated(e);
+        Track(); // resume cursor tracking
     }
 
     protected override void OnMouseLeave(MouseEventArgs e)
@@ -525,7 +664,12 @@ public sealed class MainWindow : Window
         if (dir == null) return;
         SetLive(false);
         string? next = DirectoryNavigator.Neighbor(dir, currentPath, currentTime, delta, sort);
-        if (next != null && bitmap != null && string.Equals(next, currentPath, StringComparison.OrdinalIgnoreCase)) return;
+        if (next != null && bitmap != null && string.Equals(next, currentPath, StringComparison.OrdinalIgnoreCase))
+        {
+            wheelAccum = 0; // drop unusable wheel deltas so scrolling back does not lag
+            ShowToast(delta > 0 ? "Letztes Bild" : "Erstes Bild");
+            return;
+        }
         Load(next);
     }
 
@@ -561,6 +705,7 @@ public sealed class MainWindow : Window
             watcher = new FileSystemWatcher(dir!) { NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite };
             watcher.Created += OnFileEvent;
             watcher.Renamed += OnFileEvent;
+            watcher.Changed += OnFileChanged;
             watcher.EnableRaisingEvents = true;
             return true;
         }
@@ -586,6 +731,19 @@ public sealed class MainWindow : Window
         Dispatcher.InvokeAsync(() =>
         {
             if (!live) return;
+            reloadCurrent = false; // a new file wins: jump to the newest
+            liveDebounce.Stop();
+            liveDebounce.Start();
+        });
+    }
+
+    // Runs on a thread-pool thread: the current file is still being written, so reload it once writes settle.
+    void OnFileChanged(object sender, FileSystemEventArgs e)
+    {
+        Dispatcher.InvokeAsync(() =>
+        {
+            if (!live || !string.Equals(e.FullPath, currentPath, StringComparison.OrdinalIgnoreCase)) return;
+            if (!liveDebounce.IsEnabled) reloadCurrent = true;
             liveDebounce.Stop();
             liveDebounce.Start();
         });
@@ -611,6 +769,8 @@ public sealed class MainWindow : Window
         if (menu.Visibility == Visibility.Visible && !MenuPinned) HideMenu();
         else if (helpOverlay.Visibility == Visibility.Visible) helpOverlay.Visibility = Visibility.Collapsed;
         else if (metaOverlay.Visibility == Visibility.Visible) metaOverlay.Visibility = Visibility.Collapsed;
+        else if (spanned) ToggleSpanned();
+        else if (fullscreen) ToggleFullscreen();
         else Close();
     }
 
@@ -643,22 +803,5 @@ public sealed class MainWindow : Window
         catch (Exception ex) { ShowToast("Löschen fehlgeschlagen: " + ex.Message, 3000); return; }
         if (File.Exists(path)) return; // cancelled or failed silently
         Load(DirectoryNavigator.AfterRemoval(dir, path, currentTime, sort));
-    }
-
-    internal void ToggleFullscreen()
-    {
-        fullscreen = !fullscreen;
-        if (fullscreen)
-        {
-            stateBeforeFullscreen = WindowState;
-            WindowStyle = WindowStyle.None;
-            WindowState = WindowState.Normal; // re-maximize so the borderless window covers the taskbar
-            WindowState = WindowState.Maximized;
-        }
-        else
-        {
-            WindowStyle = WindowStyle.SingleBorderWindow;
-            WindowState = stateBeforeFullscreen;
-        }
     }
 }
