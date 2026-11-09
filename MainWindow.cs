@@ -211,7 +211,7 @@ public sealed class MainWindow : Window
             StyleOverlay(slot);
             slot.MouseEnter += (_, _) => slot.BorderBrush = overlayFg; // hover highlight
             slot.MouseLeave += (_, _) => slot.BorderBrush = Brushes.Transparent;
-            slot.MouseLeftButtonDown += (_, e) => { e.Handled = true; OpenQuickFolder(index); }; // not a 1:1 click
+            slot.MouseLeftButtonDown += (_, e) => { e.Handled = true; OpenQuickFolder(index); }; // never a window double-click
             slotPanel.Children.Add(slot);
 
             if (!q.IsSet) continue;
@@ -694,11 +694,29 @@ public sealed class MainWindow : Window
         base.OnLostMouseCapture(e);
     }
 
+    // Middle button toggles spanned 1:1 (enter and leave). Always handled, so no default middle-button behavior runs.
+    // Modal dialogs block input to this window, so no extra check is needed for them.
+    protected override void OnMouseDown(MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton != MouseButton.Middle) { base.OnMouseDown(e); return; }
+        e.Handled = true;
+        if (MenuUnderMouse || slotPanel.IsMouseOver || OverOverlay(e)) return;
+        HideMenu(); // closes a keyboard-opened menu
+        ToggleSpanned();
+    }
+
+    // Overlays are not hit-testable, so check the position against every visible one.
+    bool OverOverlay(MouseEventArgs e) =>
+        new FrameworkElement[] { metaOverlay, helpOverlay, emptyBox, toastBox, hintBox }
+            .Any(o => o.IsVisible && new Rect(o.RenderSize).Contains(e.GetPosition(o)));
+
+    // Left single click does nothing; a double-click maximizes/restores the normal window (not fullscreen).
+    // Clicks on quick-access slots are handled by the slots and never arrive here.
     protected override void OnMouseLeftButtonDown(MouseButtonEventArgs e)
     {
         if (MenuUnderMouse) return;
         HideMenu(); // a click outside closes a keyboard-opened menu
-        ToggleSpanned();
+        if (e.ClickCount == 2 && !fullscreen && !spanned) Native.ToggleMaximize(Hwnd);
     }
 
     protected override void OnMouseMove(MouseEventArgs e)

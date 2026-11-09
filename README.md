@@ -10,8 +10,9 @@ Am ersten bzw. letzten Bild bleibt die Navigation stehen (kein Umlauf).
 ## Ansicht: Vollbild, 1:1 über alle Monitore, Mausführung
 
 - **F11**: randloses Vollbild auf dem Monitor, auf dem das Fenster überwiegend liegt (inkl. Taskleistenbereich).
-- **Linksklick**: 1:1 über alle Monitore – das Fenster überdeckt den gesamten virtuellen Desktop, 1 Bildpixel = 1 physisches Pixel.
-  Erneuter Klick, F11 oder Esc stellt den vorherigen Zustand wieder her.
+- **Mittlere Maustaste**: 1:1 über alle Monitore – das Fenster überdeckt den gesamten virtuellen Desktop, 1 Bildpixel = 1 physisches Pixel.
+  Erneuter Klick mit der mittleren Maustaste, F11 oder Esc stellt den vorherigen Zustand wieder her.
+- **Doppelklick** (linke Maustaste, nur im normalen Fenster): Fenster maximieren / wiederherstellen. Ein einfacher Linksklick bewirkt nichts.
 - **R** ist das Rechteck, das das Bild in Ausgangsgröße (min(1, Einpassen)) auf dem Bildschirm einnimmt.
   Ist das Bild größer als die Fläche, folgt der Ausschnitt der Mausposition innerhalb von R
   (außerhalb von R wird auf den Rand begrenzt): Mauszeiger am Rand von R = Bildrand sichtbar.
@@ -85,7 +86,8 @@ Die Tabelle wird aus `KeyTable.cs` erzeugt (`SimpleViewer.exe --update-readme RE
 | Mausrad | vorheriges/nächstes Bild (kein Umlauf am Anfang/Ende) |
 | Rechte Maustaste + Mausrad / Strg + Mausrad | Zoom (Punkt unter dem Mauszeiger bleibt stehen) |
 | Maus bewegen | bei Bild größer als die Fläche: Ausschnitt folgt der Maus (Bildrand = Rand von R, der Bildfläche in Ausgangsgröße) |
-| Linksklick | 1:1 über alle Monitore umschalten; erneuter Klick = zurück |
+| Mittlere Maustaste | 1:1-Ansicht über alle Monitore umschalten (Maus bewegen = Ausschnitt verschieben) |
+| Doppelklick | Fenster maximieren / wiederherstellen |
 | Maus an den oberen Rand | Menü einblenden (nicht bei vergrößertem Bild oder 1:1 über alle Monitore) |
 | Klick auf Schnellzugriff (ohne Bild) | Ordner öffnen; leerer Slot: Einstellungen öffnen |
 <!-- keys:end -->

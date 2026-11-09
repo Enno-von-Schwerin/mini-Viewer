@@ -63,4 +63,10 @@ internal static class Native
     }
 
     public static void SetPlacement(IntPtr hwnd, WINDOWPLACEMENT wp) => SetWindowPlacement(hwnd, ref wp);
+
+    [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hwnd, int cmd);
+    [DllImport("user32.dll")] static extern bool IsZoomed(IntPtr hwnd);
+
+    /// <summary>SW_MAXIMIZE / SW_RESTORE, so Windows keeps the previous normal bounds.</summary>
+    public static void ToggleMaximize(IntPtr hwnd) => ShowWindow(hwnd, IsZoomed(hwnd) ? 9 : 3);
 }
