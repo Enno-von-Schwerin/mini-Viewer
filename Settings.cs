@@ -7,6 +7,20 @@ using System.Windows.Media;
 namespace SimpleViewer;
 
 internal enum OverlayPosition { TopLeft, TopRight, BottomLeft, BottomRight, Center }
+internal enum OpenFolderMode { Newest, First }
+
+/// <summary>Quick-access folder slot; empty Path = not configured.</summary>
+internal sealed record QuickFolder(string Name = "", string Path = "")
+{
+    [JsonIgnore] public bool IsSet => Path.Length > 0;
+    // Display name: configured name, else the folder's name (or the path itself for a drive root).
+    public string DisplayName()
+    {
+        if (Name.Length > 0) return Name;
+        string n = System.IO.Path.GetFileName(Path.TrimEnd('\\', '/'));
+        return n.Length > 0 ? n : Path;
+    }
+}
 
 /// <summary>User settings, stored as JSON in %APPDATA%\SimpleViewer\settings.json.</summary>
 internal sealed class Settings
@@ -20,10 +34,13 @@ internal sealed class Settings
     public OverlayPosition MetadataPosition { get; set; } = OverlayPosition.TopLeft;
     // View
     public string ImageBackground { get; set; } = "#000000";
-    public int MouseMargin { get; set; } = 10;              // percent of R per side (E rectangle)
     public bool InvertWheel { get; set; }
     public SortMode DefaultSort { get; set; } = SortMode.Name;
     public bool LiveOnStart { get; set; }
+    public OpenFolderMode OpenFolderShows { get; set; } = OpenFolderMode.Newest;
+    // Quick-access folders: always exactly QuickFolderCount slots
+    public const int QuickFolderCount = 5;
+    public List<QuickFolder> QuickFolders { get; set; } = EmptySlots();
     // Live mode
     public int LiveMaxWaitSeconds { get; set; } = 10;
 
@@ -32,12 +49,22 @@ internal sealed class Settings
 
     static readonly JsonSerializerOptions Json = new() { WriteIndented = true, Converters = { new JsonStringEnumConverter() } };
 
-    public Settings Clone() => (Settings)MemberwiseClone();
+    public Settings Clone()
+    {
+        var s = (Settings)MemberwiseClone();
+        s.QuickFolders = [.. QuickFolders]; // records are immutable, a new list is enough
+        return s;
+    }
+
+    static List<QuickFolder> EmptySlots() => Enumerable.Range(0, QuickFolderCount).Select(_ => new QuickFolder()).ToList();
 
     public static Color? ParseColor(string? s) =>
         s != null && Regex.IsMatch(s, "^#[0-9A-Fa-f]{6}$") ? (Color)ColorConverter.ConvertFromString(s) : null;
 
-    /// <summary>Loads settings; every missing, unreadable or invalid field silently falls back to its default.</summary>
+    /// <summary>
+    /// Loads settings; every missing, unreadable or invalid field silently falls back to its default.
+    /// Unknown fields (e.g. the removed "MouseMargin") are ignored.
+    /// </summary>
     public static Settings Load(string? path = null)
     {
         var s = new Settings();
@@ -53,15 +80,23 @@ internal sealed class Settings
             s.OverlayOpacity = Get(r, nameof(OverlayOpacity), s.OverlayOpacity, v => v is >= 0 and <= 100);
             s.MetadataPosition = Get(r, nameof(MetadataPosition), s.MetadataPosition, Enum.IsDefined);
             s.ImageBackground = Get(r, nameof(ImageBackground), s.ImageBackground, v => ParseColor(v) != null);
-            s.MouseMargin = Get(r, nameof(MouseMargin), s.MouseMargin, v => v is >= 0 and <= 50);
             s.InvertWheel = Get(r, nameof(InvertWheel), s.InvertWheel);
             s.DefaultSort = Get(r, nameof(DefaultSort), s.DefaultSort, Enum.IsDefined);
             s.LiveOnStart = Get(r, nameof(LiveOnStart), s.LiveOnStart);
             s.LiveMaxWaitSeconds = Get(r, nameof(LiveMaxWaitSeconds), s.LiveMaxWaitSeconds, v => v is >= 1 and <= 60);
+            s.OpenFolderShows = Get(r, nameof(OpenFolderShows), s.OpenFolderShows, Enum.IsDefined);
+            // Quick folders per slot: a broken entry becomes an empty slot; paths are not checked here (only on click).
+            if (r.TryGetProperty(nameof(QuickFolders), out var q) && q.ValueKind == JsonValueKind.Array)
+                for (int i = 0; i < Math.Min(QuickFolderCount, q.GetArrayLength()); i++)
+                    s.QuickFolders[i] = new QuickFolder(Str(q[i], nameof(QuickFolder.Name)), Str(q[i], nameof(QuickFolder.Path)));
         }
         catch (Exception) { } // missing or unparsable file: defaults
         return s;
     }
+
+    static string Str(JsonElement e, string name) =>
+        e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String
+            ? v.GetString()!.Trim() : "";
 
     static T Get<T>(JsonElement root, string name, T fallback, Func<T, bool>? valid = null)
     {

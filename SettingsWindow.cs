@@ -10,9 +10,10 @@ internal sealed class SettingsWindow : Window
 {
     readonly Action<Settings> apply;
     readonly ComboBox font = new() { IsEditable = false };
-    readonly Slider fontSize = Num(8, 48), opacity = Num(0, 100), margin = Num(0, 50), maxWait = Num(1, 60);
+    readonly Slider fontSize = Num(8, 48), opacity = Num(0, 100), maxWait = Num(1, 60);
     readonly TextBox fontColor = new(), overlayBg = new(), imageBg = new();
-    readonly ComboBox position = new(), defaultSort = new();
+    readonly ComboBox position = new(), defaultSort = new(), openShows = new();
+    readonly TextBox[] slotNames = new TextBox[Settings.QuickFolderCount], slotPaths = new TextBox[Settings.QuickFolderCount];
     readonly CheckBox invertWheel = new() { Content = "Mausrad-Richtung beim Blättern umkehren" };
     readonly CheckBox liveOnStart = new() { Content = "Live-Modus beim Start aktivieren" };
     readonly Border preview = new() { Padding = new Thickness(12, 8, 12, 8), CornerRadius = new CornerRadius(6) };
@@ -21,7 +22,7 @@ internal sealed class SettingsWindow : Window
 
     static readonly string[] Positions = ["links oben", "rechts oben", "links unten", "rechts unten", "Mitte"];
 
-    public SettingsWindow(Settings current, Action<Settings> apply)
+    public SettingsWindow(Settings current, Action<Settings> apply, int? focusSlot = null)
     {
         this.apply = apply;
         Title = "Einstellungen";
@@ -34,6 +35,8 @@ internal sealed class SettingsWindow : Window
         foreach (var p in Positions) position.Items.Add(p);
         defaultSort.Items.Add("Name");
         defaultSort.Items.Add("Änderungsdatum");
+        openShows.Items.Add("Neuestes Bild");
+        openShows.Items.Add("Erstes Bild");
         preview.Child = previewText;
         previewBack.Child = preview;
 
@@ -47,10 +50,16 @@ internal sealed class SettingsWindow : Window
             Row("Vorschau", previewBack));
         var view = Group("Ansicht",
             Row("Hintergrundfarbe der Bildfläche", ColorBox(imageBg)),
-            Row("Mausbereich über Bildrand hinaus", WithValue(margin, " %")),
             Row("", invertWheel),
             Row("Standard-Sortierung", defaultSort),
+            Row("Beim Öffnen eines Ordners zuerst anzeigen", openShows),
             Row("", liveOnStart));
+        var quickRows = new List<UIElement>
+        {
+            Row("", new DockPanel { Children = { new TextBlock { Text = "Anzeigename", Width = 136 }, new TextBlock { Text = "Pfad" } } }, 60),
+        };
+        for (int i = 0; i < Settings.QuickFolderCount; i++) quickRows.Add(SlotRow(i));
+        var quickGroup = Group("Schnellzugriff-Ordner", [.. quickRows]);
         var liveGroup = Group("Live-Modus", Row("Maximale Wartezeit für unfertige Dateien", WithValue(maxWait, " s")));
 
         var defaults = Button("Standardwerte", () => Show(new Settings()));
@@ -64,7 +73,15 @@ internal sealed class SettingsWindow : Window
         buttons.Children.Add(defaults);
         foreach (var b in new[] { cancel, applyBtn, ok }) { DockPanel.SetDock(b, Dock.Right); buttons.Children.Add(b); }
 
-        Content = new StackPanel { Margin = new Thickness(12), Width = 560, Children = { overlays, view, liveGroup, buttons } };
+        Content = new ScrollViewer
+        {
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            MaxHeight = SystemParameters.WorkArea.Height * 0.9,
+            Content = new StackPanel { Margin = new Thickness(12), Width = 640, Children = { overlays, view, quickGroup, liveGroup, buttons } },
+        };
+        // Opened from an empty quick-access slot: scroll to the group and focus that slot's path field.
+        if (focusSlot is int slot && slot >= 0 && slot < Settings.QuickFolderCount)
+            Loaded += (_, _) => { quickGroup.BringIntoView(); slotPaths[slot].Focus(); };
 
         // Any change refreshes the preview and the color validation.
         foreach (var t in new[] { fontColor, overlayBg, imageBg }) t.TextChanged += (_, _) => Refresh();
@@ -104,12 +121,34 @@ internal sealed class SettingsWindow : Window
         return new StackPanel { Orientation = Orientation.Horizontal, Children = { t, swatch } };
     }
 
-    static UIElement Row(string label, UIElement control)
+    // One quick-access slot: display name, path, "..." (folder dialog) and "Leeren".
+    UIElement SlotRow(int i)
+    {
+        var name = slotNames[i] = new TextBox { Width = 130, Margin = new Thickness(0, 0, 6, 0), ToolTip = "Anzeigename (optional, leer = Ordnername)" };
+        var path = slotPaths[i] = new TextBox { ToolTip = "Ordnerpfad" };
+        var browse = Button("...", () =>
+        {
+            var dlg = new Microsoft.Win32.OpenFolderDialog { Title = "Ordner wählen" };
+            if (System.IO.Directory.Exists(path.Text)) dlg.InitialDirectory = path.Text;
+            if (dlg.ShowDialog(this) == true) path.Text = dlg.FolderName;
+        });
+        browse.MinWidth = 32;
+        var clear = Button("Leeren", () => { name.Text = ""; path.Text = ""; });
+        clear.MinWidth = 64;
+        var d = new DockPanel();
+        DockPanel.SetDock(name, Dock.Left);
+        DockPanel.SetDock(clear, Dock.Right);
+        DockPanel.SetDock(browse, Dock.Right);
+        foreach (var c in new UIElement[] { name, clear, browse, path }) d.Children.Add(c); // path fills the rest
+        return Row($"Slot {i + 1}", d, 60);
+    }
+
+    static UIElement Row(string label, UIElement control, double labelWidth = 240)
     {
         var g = new Grid { Margin = new Thickness(0, 3, 0, 3) };
-        g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(240) });
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(labelWidth) });
         g.ColumnDefinitions.Add(new ColumnDefinition());
-        var l = new TextBlock { Text = label, VerticalAlignment = VerticalAlignment.Center };
+        var l = new TextBlock { Text = label, VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap };
         Grid.SetColumn((FrameworkElement)control, 1);
         g.Children.Add(l);
         g.Children.Add(control);
@@ -140,11 +179,16 @@ internal sealed class SettingsWindow : Window
         opacity.Value = s.OverlayOpacity;
         position.SelectedIndex = (int)s.MetadataPosition;
         imageBg.Text = s.ImageBackground;
-        margin.Value = s.MouseMargin;
         invertWheel.IsChecked = s.InvertWheel;
         defaultSort.SelectedIndex = (int)s.DefaultSort;
         liveOnStart.IsChecked = s.LiveOnStart;
         maxWait.Value = s.LiveMaxWaitSeconds;
+        openShows.SelectedIndex = (int)s.OpenFolderShows;
+        for (int i = 0; i < Settings.QuickFolderCount; i++)
+        {
+            slotNames[i].Text = s.QuickFolders[i].Name;
+            slotPaths[i].Text = s.QuickFolders[i].Path;
+        }
         Refresh();
     }
 
@@ -173,11 +217,13 @@ internal sealed class SettingsWindow : Window
             OverlayOpacity = (int)opacity.Value,
             MetadataPosition = (OverlayPosition)Math.Max(0, position.SelectedIndex),
             ImageBackground = imageBg.Text.ToUpperInvariant(),
-            MouseMargin = (int)margin.Value,
             InvertWheel = invertWheel.IsChecked == true,
             DefaultSort = (SortMode)Math.Max(0, defaultSort.SelectedIndex),
             LiveOnStart = liveOnStart.IsChecked == true,
             LiveMaxWaitSeconds = (int)maxWait.Value,
+            OpenFolderShows = (OpenFolderMode)Math.Max(0, openShows.SelectedIndex),
+            QuickFolders = Enumerable.Range(0, Settings.QuickFolderCount)
+                .Select(i => new QuickFolder(slotNames[i].Text.Trim(), slotPaths[i].Text.Trim())).ToList(),
         };
         apply(s);
         try { s.Save(); }

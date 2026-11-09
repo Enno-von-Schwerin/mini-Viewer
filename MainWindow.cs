@@ -22,10 +22,19 @@ public sealed class MainWindow : Window
     readonly TextBlock toast = new();
     readonly TextBlock metaText = new() { TextWrapping = TextWrapping.Wrap };
     // All overlays/messages share one style from the settings (see ApplySettings).
-    readonly Border metaOverlay, helpOverlay, emptyBox, toastBox;
+    readonly Border metaOverlay, helpOverlay, emptyBox, toastBox, hintBox;
     Settings settings = Settings.Load();
+    Brush overlayFg = Brushes.White, overlayBg = Brushes.Black;
+    // Empty state (no image): hints at the top, quick-access slots at the bottom.
+    readonly Grid emptyState = new() { Visibility = Visibility.Collapsed };
+    readonly StackPanel slotPanel = new()
+    {
+        Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center,
+        VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(16),
+    };
     readonly Menu menu;
     readonly MenuItem liveItem, metaItem;
+    readonly MenuItem quickMenu = new() { Header = "Schnellzugriff" };
     readonly DispatcherTimer toastTimer = new();
     readonly DispatcherTimer liveDebounce = new() { Interval = TimeSpan.FromMilliseconds(150) };
     FileSystemWatcher? watcher;
@@ -42,8 +51,9 @@ public sealed class MainWindow : Window
     double scale = 1, offX, offY;  // scale: image px -> physical px; offsets in physical px relative to the client area
     int wheelAccum;
 
-    // Viewport mapping: R = image rect at initial scale (screen px), E = R grown by settings.MouseMargin % per side.
+    // Viewport mapping: R = image rect at initial scale (screen px); the cursor position within R drives the crop.
     Rect refRect;
+    Rect spanMonitor;              // M: monitor containing R when spanning started (screen px)
     bool reloadCurrent;            // live mode: pending debounce reloads the current file (Changed) instead of the newest
     readonly DispatcherTimer tracker = new(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(15) };
     DateTime? animStart;           // zoom transition: from (animFromX, animFromY) to the mapped offset over AnimMs
@@ -74,13 +84,20 @@ public sealed class MainWindow : Window
         toastBox.Margin = new Thickness(10);
         toastBox.HorizontalAlignment = HorizontalAlignment.Right;
         toastBox.VerticalAlignment = VerticalAlignment.Bottom;
+        hintBox = Overlay(new TextBlock { Text = "Ordner öffnen: Strg+O\nHilfe: F1", TextAlignment = TextAlignment.Center });
+        hintBox.VerticalAlignment = VerticalAlignment.Top;
+        hintBox.Margin = new Thickness(16, 40, 16, 16); // below the (pinned) menu
+        hintBox.Visibility = Visibility.Visible;        // shown/hidden together with emptyState
+        emptyState.Children.Add(hintBox);
+        emptyState.Children.Add(slotPanel);
         menu = BuildMenu(out liveItem, out metaItem);
         // Menu and overlays live in a layer above the canvas, so they never change the image area size.
-        foreach (var e in new UIElement[] { emptyBox, metaOverlay, helpOverlay, menu, toastBox }) overlayHost.Children.Add(e);
+        foreach (var e in new UIElement[] { emptyState, emptyBox, metaOverlay, helpOverlay, menu, toastBox }) overlayHost.Children.Add(e);
         overlayHost.SizeChanged += (_, _) =>
         {
             metaOverlay.MaxWidth = Math.Max(200, overlayHost.ActualWidth * 0.6);
             helpOverlay.MaxWidth = Math.Max(200, overlayHost.ActualWidth - 32);
+            UpdateSlotLayout();
         };
         sort = settings.DefaultSort;
         ApplySettings(settings);
@@ -104,7 +121,7 @@ public sealed class MainWindow : Window
 
         if (path == null)
         {
-            Clear("Ordner öffnen mit Strg+O");
+            Clear(null);
             menu.Visibility = Visibility.Visible; // pinned until the first image is loaded
         }
         else
@@ -128,20 +145,23 @@ public sealed class MainWindow : Window
     internal static Brush OverlayBrush(Color c, int opacityPercent) =>
         new SolidColorBrush(Color.FromArgb((byte)Math.Round(255 * Math.Clamp(opacityPercent, 0, 100) / 100.0), c.R, c.G, c.B));
 
-    // Applies settings live: shared overlay style, image-area background, metadata position, mouse margin.
+    // The one shared overlay style (font, size, colors, background opacity from the settings).
+    void StyleOverlay(Border b)
+    {
+        b.Background = overlayBg;
+        TextElement.SetForeground(b, overlayFg);
+        TextElement.SetFontFamily(b, new FontFamily(settings.FontFamily));
+        TextElement.SetFontSize(b, settings.FontSize);
+    }
+
+    // Applies settings live: shared overlay style, image-area background, metadata position, quick-access folders.
     void ApplySettings(Settings s)
     {
         settings = s;
-        var fg = new SolidColorBrush(Settings.ParseColor(s.FontColor) ?? Colors.White);
-        var bg = OverlayBrush(Settings.ParseColor(s.OverlayBackground) ?? Colors.Black, s.OverlayOpacity);
-        var font = new FontFamily(s.FontFamily);
-        foreach (var b in new[] { metaOverlay, helpOverlay, emptyBox, toastBox })
-        {
-            b.Background = bg;
-            TextElement.SetForeground(b, fg);
-            TextElement.SetFontFamily(b, font);
-            TextElement.SetFontSize(b, s.FontSize);
-        }
+        overlayFg = new SolidColorBrush(Settings.ParseColor(s.FontColor) ?? Colors.White);
+        overlayBg = OverlayBrush(Settings.ParseColor(s.OverlayBackground) ?? Colors.Black, s.OverlayOpacity);
+        foreach (var b in new[] { metaOverlay, helpOverlay, emptyBox, toastBox, hintBox }) StyleOverlay(b);
+        BuildQuickAccess();
         var area = new SolidColorBrush(Settings.ParseColor(s.ImageBackground) ?? Colors.Black);
         canvas.Background = area;
         Background = area;
@@ -156,7 +176,63 @@ public sealed class MainWindow : Window
         Relayout();
     }
 
-    internal void OpenSettings() => new SettingsWindow(settings.Clone(), ApplySettings) { Owner = this }.ShowDialog();
+    internal void OpenSettings(int? focusSlot = null) =>
+        new SettingsWindow(settings.Clone(), ApplySettings, focusSlot) { Owner = this }.ShowDialog();
+
+    // ---------- Quick-access folders (empty-state slots and Datei > Schnellzugriff) ----------
+
+    double SlotWidth => settings.FontSize * 14;
+
+    void BuildQuickAccess()
+    {
+        slotPanel.Children.Clear();
+        quickMenu.Items.Clear();
+        for (int i = 0; i < settings.QuickFolders.Count; i++)
+        {
+            var q = settings.QuickFolders[i];
+            int index = i;
+            var slot = new Border
+            {
+                Width = SlotWidth, Margin = new Thickness(6), Padding = new Thickness(12, 8, 12, 8), CornerRadius = new CornerRadius(6),
+                BorderThickness = new Thickness(2), BorderBrush = Brushes.Transparent, Cursor = Cursors.Hand,
+                Opacity = q.IsSet ? 1 : 0.5, // empty slots dimmed
+                Child = new StackPanel
+                {
+                    Children =
+                    {
+                        new TextBlock { Text = q.IsSet ? q.DisplayName() : "Nicht belegt", FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis },
+                        new TextBlock { Text = q.IsSet ? q.Path : " ", FontSize = settings.FontSize * 0.75, TextTrimming = TextTrimming.CharacterEllipsis },
+                    },
+                },
+            };
+            StyleOverlay(slot);
+            slot.MouseEnter += (_, _) => slot.BorderBrush = overlayFg; // hover highlight
+            slot.MouseLeave += (_, _) => slot.BorderBrush = Brushes.Transparent;
+            slot.MouseLeftButtonDown += (_, e) => { e.Handled = true; OpenQuickFolder(index); }; // not a 1:1 click
+            slotPanel.Children.Add(slot);
+
+            if (!q.IsSet) continue;
+            var mi = new MenuItem { Header = q.DisplayName().Replace("_", "__"), ToolTip = q.Path };
+            mi.Click += (_, _) => OpenQuickFolder(index);
+            quickMenu.Items.Add(mi);
+        }
+        quickMenu.IsEnabled = quickMenu.Items.Count > 0;
+        quickMenu.Header = quickMenu.IsEnabled ? "Schnellzugriff" : "Schnellzugriff (keine Ordner eingerichtet)";
+        UpdateSlotLayout();
+    }
+
+    // Horizontal row if it fits, otherwise a vertical stack.
+    void UpdateSlotLayout() =>
+        slotPanel.Orientation = overlayHost.ActualWidth >= settings.QuickFolders.Count * (SlotWidth + 12) + 32
+            ? Orientation.Horizontal : Orientation.Vertical;
+
+    void OpenQuickFolder(int index)
+    {
+        var q = settings.QuickFolders[index];
+        if (!q.IsSet) { OpenSettings(index); return; }
+        if (!Directory.Exists(q.Path)) { ShowToast("Ordner nicht gefunden", 3000); return; }
+        OpenFolderPath(q.Path);
+    }
 
     static Grid BuildHelp()
     {
@@ -169,7 +245,7 @@ public sealed class MainWindow : Window
         var header = new TextBlock { Text = "SimpleViewer – Hilfe", FontWeight = FontWeights.Bold, Margin = new Thickness(0, 0, 0, 10) };
         Grid.SetColumnSpan(header, 2);
         Add(header, 0, 0);
-        foreach (var k in KeyTable.Entries)
+        foreach (var k in KeyTable.Sorted)
         {
             int row = g.RowDefinitions.Count;
             g.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -216,7 +292,7 @@ public sealed class MainWindow : Window
                     Header = "Datei",
                     Items =
                     {
-                        Cmd("Ordner öffnen...", KeyTable.OpenFolder), Cmd("Im Explorer anzeigen", KeyTable.ShowInExplorer),
+                        Cmd("Ordner öffnen...", KeyTable.OpenFolder), quickMenu, Cmd("Im Explorer anzeigen", KeyTable.ShowInExplorer),
                         Cmd("Einstellungen...", KeyTable.OpenSettings), exit,
                     },
                 },
@@ -332,6 +408,7 @@ public sealed class MainWindow : Window
         parameters = meta;
         image.Source = bmp;
         emptyBox.Visibility = Visibility.Collapsed;
+        emptyState.Visibility = Visibility.Collapsed;
         metaText.Text = meta ?? "keine Metadaten";
         // Spanned mode stays active across navigation (1:1, R fixed); otherwise start at the initial scale.
         if (spanned) scale = 1; else autoFit = true;
@@ -352,14 +429,16 @@ public sealed class MainWindow : Window
         Clear($"{Path.GetFileName(path)} kann nicht geladen werden");
     }
 
-    void Clear(string message)
+    // No image: shows the empty state (hints + quick-access slots) and an optional centered message.
+    void Clear(string? message)
     {
         if (spanned) ToggleSpanned(); // nothing to span without an image
         bitmap = null;
         parameters = null;
         image.Source = null;
-        emptyText.Text = message;
-        emptyBox.Visibility = Visibility.Visible;
+        emptyText.Text = message ?? "";
+        emptyBox.Visibility = message != null ? Visibility.Visible : Visibility.Collapsed;
+        emptyState.Visibility = Visibility.Visible;
         metaText.Text = "keine Metadaten";
         UpdateTitle();
     }
@@ -408,21 +487,31 @@ public sealed class MainWindow : Window
         Track();
     }
 
-    // Offset the image should have: cursor-mapped via E on axes where it exceeds the area, else centered on R.
+    // Offset the image should have: cursor-mapped via R on axes where it exceeds the area, else centered on R.
+    // Spanned: all positioning is relative to the reference monitor M instead of the window/bounding box.
     (double X, double Y) MappedOffset()
     {
         var v = View;
         var o = ClientOrigin;
         var c = Native.CursorPos();
         var r = refRect;
-        double m = settings.MouseMargin / 100.0;
-        var e = Rect.Inflate(r, r.Width * m, r.Height * m);
-        static double Axis(double img, double area, double cursor, double eStart, double eSize, double rCenter) =>
-            img > area
-                ? -Math.Clamp(eSize > 0 ? (cursor - eStart) / eSize : 0.5, 0, 1) * (img - area)
-                : Math.Clamp(rCenter - img / 2, 0, area - img);
-        return (Axis(bitmap!.PixelWidth * scale, v.Width, c.X, e.X, e.Width, r.X + r.Width / 2 - o.X),
-                Axis(bitmap.PixelHeight * scale, v.Height, c.Y, e.Y, e.Height, r.Y + r.Height / 2 - o.Y));
+        double w = bitmap!.PixelWidth * scale, h = bitmap.PixelHeight * scale;
+        // t: cursor clamped to R, normalized to 0..1 per axis.
+        static double T(double cursor, double rStart, double rSize) =>
+            Math.Clamp(rSize > 0 ? (cursor - rStart) / rSize : 0.5, 0, 1);
+        if (spanned)
+        {
+            // Screen position M.origin + t * (M.size - imageSize), t = 0.5 (centered) where the image fits into M.
+            // Not clamped to the bounding box; converted to window coordinates via the window origin.
+            var M = spanMonitor;
+            static double OnMonitor(double img, double mStart, double mSize, double t) => mStart + t * (mSize - img);
+            return (OnMonitor(w, M.X, M.Width, w > M.Width ? T(c.X, r.X, r.Width) : 0.5) - o.X,
+                    OnMonitor(h, M.Y, M.Height, h > M.Height ? T(c.Y, r.Y, r.Height) : 0.5) - o.Y);
+        }
+        static double Axis(double img, double area, double t, double rCenter) =>
+            img > area ? -t * (img - area) : Math.Clamp(rCenter - img / 2, 0, area - img);
+        return (Axis(w, v.Width, T(c.X, r.X, r.Width), r.X + r.Width / 2 - o.X),
+                Axis(h, v.Height, T(c.Y, r.Y, r.Height), r.Y + r.Height / 2 - o.Y));
     }
 
     // Updates the offset from the cursor (polled, so it also works outside the window) and runs the zoom transition.
@@ -509,7 +598,7 @@ public sealed class MainWindow : Window
         Relayout();
     }
 
-    // Spanned 1:1: the window covers the whole virtual desktop; R/E stay where they were.
+    // Spanned 1:1: the window covers the whole virtual desktop; R stays where it was.
     internal void ToggleSpanned()
     {
         if (!spanned)
@@ -518,14 +607,15 @@ public sealed class MainWindow : Window
             Relayout(); // make sure R is current
             HideMenu();
             beforeSpan = (fullscreen, Native.GetPlacement(Hwnd), Native.WindowRect(Hwnd), scale, autoFit);
+            // Reference monitor M (contains R): fixed while spanned; used for image positioning and overlays.
+            var m = spanMonitor = Native.MonitorOfRect(refRect);
             spanned = true;
             scale = 1;
             autoFit = false;
             var vs = Native.VirtualScreen();
             SetBorderless(true);
             Native.Place(Hwnd, vs);
-            // Keep overlays inside the monitor that contains R (the bounding box may have areas without a monitor).
-            var m = Native.MonitorOfRect(refRect);
+            // Keep overlays inside M (the bounding box may have areas without a monitor).
             double d = Dpi;
             overlayHost.Margin = new Thickness((m.Left - vs.Left) / d, (m.Top - vs.Top) / d, (vs.Right - m.Right) / d, (vs.Bottom - m.Bottom) / d);
         }
@@ -646,12 +736,19 @@ public sealed class MainWindow : Window
             Title = "Ordner öffnen",
             InitialDirectory = bitmap != null && dir != null ? dir : Environment.GetFolderPath(Environment.SpecialFolder.MyPictures),
         };
-        if (dlg.ShowDialog(this) != true) return;
-        string? first = DirectoryNavigator.Neighbor(dlg.FolderName, null, default, 1, sort);
-        if (first == null) { ShowToast("Keine Bilder im Ordner", 3000); return; }
-        dir = dlg.FolderName;
+        if (dlg.ShowDialog(this) == true) OpenFolderPath(dlg.FolderName);
+    }
+
+    // Shared by the dialog, quick-access slots and menu: enumerate once, show the newest or first image.
+    void OpenFolderPath(string folder)
+    {
+        string? pick = settings.OpenFolderShows == OpenFolderMode.Newest
+            ? DirectoryNavigator.Newest(folder)
+            : DirectoryNavigator.Neighbor(folder, null, default, 1, sort);
+        if (pick == null) { ShowToast("Keine Bilder im Ordner", 3000); return; }
+        dir = folder;
         if (live && !StartWatcher()) SetLive(false); // re-target the watcher to the new folder
-        Load(first);
+        Load(pick);
     }
 
     internal void ShowInExplorer()

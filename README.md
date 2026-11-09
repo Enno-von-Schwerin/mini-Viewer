@@ -7,21 +7,35 @@ Ohne Argument gestartet zeigt es ein leeres Fenster mit Menü; Ordner öffnen mi
 Das Menü erscheint sonst, wenn die Maus an den oberen Fensterrand fährt, oder mit Alt/F10.
 Am ersten bzw. letzten Bild bleibt die Navigation stehen (kein Umlauf).
 
-## Ansicht: Vollbild, 1:1 über alle Monitore, Mausbereich
+## Ansicht: Vollbild, 1:1 über alle Monitore, Mausführung
 
 - **F11**: randloses Vollbild auf dem Monitor, auf dem das Fenster überwiegend liegt (inkl. Taskleistenbereich).
 - **Linksklick**: 1:1 über alle Monitore – das Fenster überdeckt den gesamten virtuellen Desktop, 1 Bildpixel = 1 physisches Pixel.
   Erneuter Klick, F11 oder Esc stellt den vorherigen Zustand wieder her.
-- **R** ist das Rechteck, das das Bild in Ausgangsgröße (min(1, Einpassen)) auf dem Bildschirm einnimmt;
-  **E** ist R, auf jeder Seite um den „Mausbereich über Bildrand hinaus“ (Standard 10 %) vergrößert.
-  Ist das Bild größer als die Fläche, folgt der Ausschnitt der Mausposition innerhalb von E:
-  Mauszeiger am Rand von E = Bildrand sichtbar. R und E bleiben beim Zoomen und in der 1:1-Ansicht fest.
+- **R** ist das Rechteck, das das Bild in Ausgangsgröße (min(1, Einpassen)) auf dem Bildschirm einnimmt.
+  Ist das Bild größer als die Fläche, folgt der Ausschnitt der Mausposition innerhalb von R
+  (außerhalb von R wird auf den Rand begrenzt): Mauszeiger am Rand von R = Bildrand sichtbar.
+  R bleibt beim Zoomen und in der 1:1-Ansicht fest.
+- In der 1:1-Ansicht über alle Monitore bezieht sich die Positionierung auf den **Referenzmonitor M**
+  (der Monitor, der R enthält): Mauszeiger am linken/oberen Rand von R = linke/obere Bildkante auf der
+  linken/oberen Kante von M, am rechten/unteren Rand = rechte/untere Bildkante auf der rechten/unteren Kante von M,
+  Mitte von R = Bildmitte in der Mitte von M. Das Bild darf dabei auf Nachbarmonitore hinausragen.
+  Passt das Bild in einer Richtung in M, wird es dort auf M zentriert.
 
 ## Einstellungen
 
 Datei > Einstellungen... (Strg+,). Gespeichert in `%APPDATA%\SimpleViewer\settings.json`;
 fehlende oder ungültige Werte werden still durch Standardwerte ersetzt.
 „Hintergrund-Deckkraft“ der Overlays: 0 % = völlig durchsichtig, 100 % = deckend (Standard 70 %).
+„Beim Öffnen eines Ordners zuerst anzeigen“: neuestes Bild (Standard) oder erstes Bild der aktuellen Sortierung –
+gilt für den Dialog „Ordner öffnen“, die Schnellzugriff-Slots und das Menü.
+
+## Schnellzugriff-Ordner
+
+Bis zu 5 Ordner, einzurichten unter Einstellungen > „Schnellzugriff-Ordner“ (Anzeigename optional, sonst Ordnername).
+Ohne geladenes Bild (Start ohne Argument oder nach dem Löschen des letzten Bildes) erscheinen sie als Kacheln am
+unteren Fensterrand; Klick öffnet den Ordner, Klick auf einen leeren Slot öffnet die Einstellungen.
+Außerdem im Menü unter Datei > Schnellzugriff. Existiert ein Ordner nicht mehr, erscheint „Ordner nicht gefunden“.
 
 ## Build / Publish
 
@@ -49,26 +63,27 @@ Die Tabelle wird aus `KeyTable.cs` erzeugt (`SimpleViewer.exe --update-readme RE
 <!-- keys:start -->
 | Taste / Maus | Aktion |
 |---|---|
-| Mausrad | vorheriges/nächstes Bild (kein Umlauf am Anfang/Ende) |
-| Rechte Maustaste + Mausrad / Strg + Mausrad | Zoom (Punkt unter dem Mauszeiger bleibt stehen) |
-| Maus bewegen | bei Bild größer als die Fläche: Ausschnitt folgt der Maus (Bildrand = Rand des Mausbereichs) |
-| Linksklick | 1:1 über alle Monitore umschalten; erneuter Klick = zurück |
-| Maus an den oberen Rand | Menü einblenden (nicht bei vergrößertem Bild oder 1:1 über alle Monitore) |
 | 0 | Ausgangsgröße |
 | 1 | Zoom 100 % (1 Bildpixel = 1 Bildschirmpixel) im aktuellen Fenster |
-| Links / Rechts | vorheriges/nächstes Bild |
-| O | Sortierung Name/Datum |
-| L | Live-Modus |
-| I | Metadaten |
 | C | alles kopieren |
+| I | Metadaten |
+| L | Live-Modus |
+| O | Sortierung Name/Datum |
 | P | Prompt kopieren |
 | S | Seed kopieren |
-| Entf | in den Papierkorb |
-| Strg+O | Ordner öffnen |
-| Strg+E | im Explorer anzeigen |
-| Strg+, | Einstellungen |
-| Alt / F10 | Menü einblenden |
-| F11 | Vollbild auf dem aktuellen Monitor (in 1:1 über alle Monitore: zurück) |
-| Esc | Menü/Overlay schließen, sonst 1:1 über alle Monitore bzw. Vollbild verlassen, sonst beenden |
 | F1 / H | diese Hilfe |
+| F11 | Vollbild auf dem aktuellen Monitor (in 1:1 über alle Monitore: zurück) |
+| Links / Rechts | vorheriges/nächstes Bild |
+| Entf | in den Papierkorb |
+| Esc | Menü/Overlay schließen, sonst 1:1 über alle Monitore bzw. Vollbild verlassen, sonst beenden |
+| Alt / F10 | Menü einblenden |
+| Strg+E | im Explorer anzeigen |
+| Strg+O | Ordner öffnen |
+| Strg+, | Einstellungen |
+| Mausrad | vorheriges/nächstes Bild (kein Umlauf am Anfang/Ende) |
+| Rechte Maustaste + Mausrad / Strg + Mausrad | Zoom (Punkt unter dem Mauszeiger bleibt stehen) |
+| Maus bewegen | bei Bild größer als die Fläche: Ausschnitt folgt der Maus (Bildrand = Rand von R, der Bildfläche in Ausgangsgröße) |
+| Linksklick | 1:1 über alle Monitore umschalten; erneuter Klick = zurück |
+| Maus an den oberen Rand | Menü einblenden (nicht bei vergrößertem Bild oder 1:1 über alle Monitore) |
+| Klick auf Schnellzugriff (ohne Bild) | Ordner öffnen; leerer Slot: Einstellungen öffnen |
 <!-- keys:end -->

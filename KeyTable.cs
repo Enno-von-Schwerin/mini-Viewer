@@ -25,9 +25,10 @@ internal static class KeyTable
     [
         new("Mausrad", "vorheriges/nächstes Bild (kein Umlauf am Anfang/Ende)", [], null),
         new("Rechte Maustaste + Mausrad / Strg + Mausrad", "Zoom (Punkt unter dem Mauszeiger bleibt stehen)", [], null),
-        new("Maus bewegen", "bei Bild größer als die Fläche: Ausschnitt folgt der Maus (Bildrand = Rand des Mausbereichs)", [], null),
+        new("Maus bewegen", "bei Bild größer als die Fläche: Ausschnitt folgt der Maus (Bildrand = Rand von R, der Bildfläche in Ausgangsgröße)", [], null),
         new("Linksklick", "1:1 über alle Monitore umschalten; erneuter Klick = zurück", [], null),
         new("Maus an den oberen Rand", "Menü einblenden (nicht bei vergrößertem Bild oder 1:1 über alle Monitore)", [], null),
+        new("Klick auf Schnellzugriff (ohne Bild)", "Ordner öffnen; leerer Slot: Einstellungen öffnen", [], null),
         new("0", "Ausgangsgröße", [Key.D0, Key.NumPad0], (w, _) => w.ResetZoom()),
         new("1", "Zoom 100 % (1 Bildpixel = 1 Bildschirmpixel) im aktuellen Fenster", [Key.D1, Key.NumPad1], (w, _) => w.ZoomTo100()),
         new("Links / Rechts", "vorheriges/nächstes Bild", [Key.Left, Key.Right], (w, k) => w.Step(k == Key.Left ? -1 : 1)),
@@ -47,7 +48,33 @@ internal static class KeyTable
         Help,
     ];
 
+    /// <summary>Entries in display order (help overlay, README), independent of the table order.</summary>
+    public static IEnumerable<KeyEntry> Sorted => Entries.Select((e, i) => (e, i)).OrderBy(x => SortRank(x.e, x.i)).Select(x => x.e);
+
+    // Order: no modifier (digits, letters, F-keys, other keys), then Ctrl, then Alt combinations, then mouse rows
+    // (text-only) in table order. Combined entries ("Links / Rechts") sort by their first key.
+    static (int Modifier, int Group, int Sub, string Name, int Index) SortRank(KeyEntry e, int index)
+    {
+        if (e.Keys.Length == 0) return (9, 0, 0, "", index);
+        int modifier = e.Modifiers switch { ModifierKeys.None => 0, ModifierKeys.Control => 1, ModifierKeys.Alt => 2, _ => 3 };
+        var k = e.Keys[0];
+        return k switch
+        {
+            >= Key.D0 and <= Key.D9 => (modifier, 0, k - Key.D0, "", index),
+            >= Key.NumPad0 and <= Key.NumPad9 => (modifier, 0, k - Key.NumPad0, "", index),
+            >= Key.A and <= Key.Z => (modifier, 1, k - Key.A, "", index),
+            >= Key.F1 and <= Key.F24 => (modifier, 2, k - Key.F1, "", index),
+            Key.Left => (modifier, 3, 0, "", index),
+            Key.Right => (modifier, 3, 1, "", index),
+            Key.Up => (modifier, 3, 2, "", index),
+            Key.Down => (modifier, 3, 3, "", index),
+            Key.Delete => (modifier, 3, 4, "", index),
+            Key.Escape => (modifier, 3, 5, "", index),
+            _ => (modifier, 3, 6, e.Label, index), // anything else: alphabetically by display name
+        };
+    }
+
     public static string ToMarkdown() =>
         "| Taste / Maus | Aktion |\n|---|---|\n" +
-        string.Join("\n", Entries.Select(e => $"| {e.Label} | {e.Description} |"));
+        string.Join("\n", Sorted.Select(e => $"| {e.Label} | {e.Description} |"));
 }
