@@ -12,12 +12,14 @@ internal sealed class SettingsWindow : Window
     readonly ComboBox font = new() { IsEditable = false };
     readonly Slider fontSize = Num(8, 48), opacity = Num(0, 100), maxWait = Num(1, 60);
     readonly TextBox fontColor = new(), overlayBg = new(), imageBg = new();
-    readonly ComboBox position = new(), defaultSort = new(), openShows = new();
+    readonly ComboBox position = new(), defaultSort = new(), openShows = new(), autoSeconds = new(), autoEnd = new();
     readonly TextBox[] slotNames = new TextBox[Settings.QuickFolderCount], slotPaths = new TextBox[Settings.QuickFolderCount];
     readonly CheckBox invertWheel = new() { Content = "Mausrad-Richtung beim Blättern umkehren" };
     readonly CheckBox liveOnStart = new() { Content = "Live-Modus beim Start aktivieren" };
     readonly CheckBox wheelToLive = new() { Content = "Live-Modus durch Weiterscrollen am letzten Bild einschalten" };
     readonly TextBox wheelPause = new() { Width = 60, ToolTip = "0,5 bis 10 s; ungültige Werte werden durch 2,0 ersetzt" };
+    readonly CheckBox invertTilt = new() { Content = "Seitliches Mausrad: Richtung umkehren" };
+    readonly TextBox tiltRepeat = new() { Width = 60, ToolTip = "100 bis 1000 ms; ungültige Werte werden durch 500 ersetzt" };
     readonly CheckBox[] slotDialogs = new CheckBox[Settings.QuickFolderCount];
     readonly Border preview = new() { Padding = new Thickness(12, 8, 12, 8), CornerRadius = new CornerRadius(6) };
     readonly TextBlock previewText = new() { Text = "Seed: 1234567890, Steps: 30\nÄÖÜ äöü ß – Beispieltext" };
@@ -40,6 +42,8 @@ internal sealed class SettingsWindow : Window
         defaultSort.Items.Add("Änderungsdatum");
         openShows.Items.Add("Neuestes Bild");
         openShows.Items.Add("Erstes Bild");
+        foreach (var t in AutoAdvance.Times) autoSeconds.Items.Add(t.ToString());
+        foreach (var e in new[] { "Warten", "Von vorne beginnen", "Auto-Modus beenden" }) autoEnd.Items.Add(e); // AutoEndMode order
         preview.Child = previewText;
         previewBack.Child = preview;
 
@@ -66,6 +70,11 @@ internal sealed class SettingsWindow : Window
         var liveGroup = Group("Live-Modus", Row("Maximale Wartezeit für unfertige Dateien", WithValue(maxWait, " s")),
             Row("", wheelToLive),
             Row("Pause zwischen Scrollschritten (s)", new StackPanel { Orientation = Orientation.Horizontal, Children = { wheelPause } }));
+        autoSeconds.Width = 80;
+        autoSeconds.HorizontalAlignment = HorizontalAlignment.Left;
+        var autoGroup = Group("Auto-Modus", Row("Standard-Anzeigezeit (s)", autoSeconds), Row("Am Ende der Bilder", autoEnd),
+            Row("", invertTilt),
+            Row("Seitliches Mausrad: Wiederholintervall (ms)", new StackPanel { Orientation = Orientation.Horizontal, Children = { tiltRepeat } }));
 
         var defaults = Button("Standardwerte", () => Show(new Settings()));
         var ok = Button("OK", () => { if (TryApply()) Close(); });
@@ -82,7 +91,7 @@ internal sealed class SettingsWindow : Window
         {
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             MaxHeight = SystemParameters.WorkArea.Height * 0.9,
-            Content = new StackPanel { Margin = new Thickness(12), Width = 720, Children = { overlays, view, quickGroup, liveGroup, buttons } },
+            Content = new StackPanel { Margin = new Thickness(12), Width = 720, Children = { overlays, view, quickGroup, liveGroup, autoGroup, buttons } },
         };
         // Opened from an empty quick-access slot: scroll to the group and focus that slot's path field.
         if (focusSlot is int slot && slot >= 0 && slot < Settings.QuickFolderCount)
@@ -195,6 +204,10 @@ internal sealed class SettingsWindow : Window
         liveOnStart.IsChecked = s.LiveOnStart;
         maxWait.Value = s.LiveMaxWaitSeconds;
         wheelToLive.IsChecked = s.WheelToLive;
+        autoSeconds.SelectedIndex = Array.IndexOf(AutoAdvance.Times, s.AutoSeconds);
+        autoEnd.SelectedIndex = (int)s.AutoEnd;
+        invertTilt.IsChecked = s.InvertTilt;
+        tiltRepeat.Text = s.TiltRepeatMs.ToString();
         wheelPause.Text = s.WheelToLivePauseSeconds.ToString("0.0#", German);
         openShows.SelectedIndex = (int)s.OpenFolderShows;
         for (int i = 0; i < Settings.QuickFolderCount; i++)
@@ -244,11 +257,16 @@ internal sealed class SettingsWindow : Window
             LiveMaxWaitSeconds = (int)maxWait.Value,
             WheelToLive = wheelToLive.IsChecked == true,
             WheelToLivePauseSeconds = ParsePause(wheelPause.Text),
+            AutoSeconds = autoSeconds.SelectedIndex >= 0 ? AutoAdvance.Times[autoSeconds.SelectedIndex] : 5,
+            AutoEnd = (AutoEndMode)Math.Max(0, autoEnd.SelectedIndex),
+            InvertTilt = invertTilt.IsChecked == true,
+            TiltRepeatMs = int.TryParse(tiltRepeat.Text.Trim(), out var ms) && Settings.ValidRepeat(ms) ? ms : new Settings().TiltRepeatMs,
             OpenFolderShows = (OpenFolderMode)Math.Max(0, openShows.SelectedIndex),
             QuickFolders = Enumerable.Range(0, Settings.QuickFolderCount)
                 .Select(i => new QuickFolder(slotNames[i].Text.Trim(), slotPaths[i].Text.Trim(), slotDialogs[i].IsChecked == true)).ToList(),
         };
         wheelPause.Text = s.WheelToLivePauseSeconds.ToString("0.0#", German); // show the fallback if the input was invalid
+        tiltRepeat.Text = s.TiltRepeatMs.ToString();
         apply(s);
         try { s.Save(); }
         catch (Exception ex)

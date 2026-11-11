@@ -66,6 +66,8 @@ internal static class Native
 
     [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hwnd, int cmd);
     [DllImport("user32.dll")] static extern bool IsZoomed(IntPtr hwnd);
+    /// <summary>False while a modal dialog (WPF or common dialog) has disabled the window.</summary>
+    [DllImport("user32.dll")] public static extern bool IsWindowEnabled(IntPtr hwnd);
 
     /// <summary>SW_MAXIMIZE / SW_RESTORE, so Windows keeps the previous normal bounds.</summary>
     public static void ToggleMaximize(IntPtr hwnd) => ShowWindow(hwnd, IsZoomed(hwnd) ? 9 : 3);

@@ -53,6 +53,18 @@ public sealed class MainWindow : Window
     // Forward wheel notches at the last image (live off) count down to switching live mode on.
     readonly WheelToLive wheelToLive = new(() => Uptime.Elapsed);
     static readonly Stopwatch Uptime = Stopwatch.StartNew();
+    // Auto mode (slideshow): countdown logic in AutoAdvance; panel (T + shrinking bar) above the toast position.
+    readonly AutoAdvance auto = new(() => Uptime.Elapsed);
+    readonly DispatcherTimer autoTimer = new(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(33) };
+    // Display-time controls: one step at once, then one per repeat interval while the tilt / key is held.
+    readonly TiltRepeat tiltRepeat = new(() => Uptime.Elapsed), keyRepeat = new(() => Uptime.Elapsed);
+    bool keyIsRepeat;              // e.IsRepeat of the key being dispatched
+    readonly TextBlock autoText = new();
+    readonly Border autoTrack = new() { HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 4, 0, 0) };
+    readonly Border autoFill = new() { HorizontalAlignment = HorizontalAlignment.Left };
+    readonly Border autoPanel;
+    MenuItem autoItem = null!;
+    bool autoHold;                 // Auto mode paused by the middle button
 
     // Viewport mapping: R = image rect at initial scale (screen px); the cursor position within R drives the crop.
     Rect refRect;
@@ -87,9 +99,18 @@ public sealed class MainWindow : Window
         emptyBox = Overlay(emptyText);
         toastBox = Overlay(toast);
         toastBox.Padding = new Thickness(8, 4, 8, 4);
-        toastBox.Margin = new Thickness(10);
         toastBox.HorizontalAlignment = HorizontalAlignment.Right;
-        toastBox.VerticalAlignment = VerticalAlignment.Bottom;
+        autoTrack.Child = autoFill;
+        autoPanel = Overlay(new StackPanel { Children = { autoText, autoTrack } });
+        autoPanel.Padding = new Thickness(8, 4, 8, 6);
+        autoPanel.HorizontalAlignment = HorizontalAlignment.Right;
+        autoPanel.Margin = new Thickness(0, 6, 0, 0);
+        // Short messages stack above the auto panel at the bottom right instead of overlapping it.
+        var bottomRight = new StackPanel
+        {
+            Margin = new Thickness(10), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom,
+            IsHitTestVisible = false, Children = { toastBox, autoPanel },
+        };
         hintBox = Overlay(new TextBlock { Text = "Ordner öffnen: Strg+O\nHilfe: F1", TextAlignment = TextAlignment.Center });
         hintBox.VerticalAlignment = VerticalAlignment.Top;
         hintBox.Margin = new Thickness(16, 40, 16, 16); // below the (pinned) menu
@@ -98,7 +119,7 @@ public sealed class MainWindow : Window
         emptyState.Children.Add(slotPanel);
         menu = BuildMenu(out liveItem, out metaItem);
         // Menu and overlays live in a layer above the canvas, so they never change the image area size.
-        foreach (var e in new UIElement[] { emptyState, emptyBox, metaOverlay, helpOverlay, menu, toastBox }) overlayHost.Children.Add(e);
+        foreach (var e in new UIElement[] { emptyState, emptyBox, metaOverlay, helpOverlay, menu, bottomRight }) overlayHost.Children.Add(e);
         overlayHost.SizeChanged += (_, _) =>
         {
             metaOverlay.MaxWidth = Math.Max(200, overlayHost.ActualWidth * 0.6);
@@ -106,6 +127,7 @@ public sealed class MainWindow : Window
             UpdateSlotLayout();
         };
         sort = settings.DefaultSort;
+        auto.Seconds = settings.AutoSeconds;
         ApplySettings(settings);
         Content = new Grid { Children = { canvas, overlayHost } };
         RenderOptions.SetBitmapScalingMode(image, BitmapScalingMode.HighQuality);
@@ -122,7 +144,8 @@ public sealed class MainWindow : Window
             else JumpToNewest();
             reloadCurrent = false;
         };
-        Closed += (_, _) => watcher?.Dispose();
+        autoTimer.Tick += (_, _) => AutoTick();
+        Closed += (_, _) => { watcher?.Dispose(); SaveAutoSeconds(); };
         Deactivated += (_, _) => { if (!AnySubmenuOpen) HideMenu(); };
 
         if (path == null)
@@ -163,10 +186,19 @@ public sealed class MainWindow : Window
     // Applies settings live: shared overlay style, image-area background, metadata position, quick-access folders.
     void ApplySettings(Settings s)
     {
+        if (s.AutoSeconds != settings.AutoSeconds) auto.Seconds = s.AutoSeconds; // changed in the dialog: adopt as T
         settings = s;
-        overlayFg = new SolidColorBrush(Settings.ParseColor(s.FontColor) ?? Colors.White);
+        var fg = Settings.ParseColor(s.FontColor) ?? Colors.White;
+        overlayFg = new SolidColorBrush(fg);
         overlayBg = OverlayBrush(Settings.ParseColor(s.OverlayBackground) ?? Colors.Black, s.OverlayOpacity);
-        foreach (var b in new[] { metaOverlay, helpOverlay, emptyBox, toastBox, hintBox }) StyleOverlay(b);
+        foreach (var b in new[] { metaOverlay, helpOverlay, emptyBox, toastBox, hintBox, autoPanel }) StyleOverlay(b);
+        // Bar: fixed width of 12 x font size; track in the dimmed font color, fill in the font color.
+        autoTrack.Width = s.FontSize * 12;
+        autoTrack.Height = autoFill.Height = Math.Max(4, s.FontSize * 0.4);
+        autoTrack.Background = OverlayBrush(fg, 30);
+        autoFill.Background = overlayFg;
+        tiltRepeat.Interval = keyRepeat.Interval = TimeSpan.FromMilliseconds(s.TiltRepeatMs);
+        UpdateAutoPanel();
         BuildQuickAccess();
         var area = new SolidColorBrush(Settings.ParseColor(s.ImageBackground) ?? Colors.Black);
         canvas.Background = area;
@@ -182,8 +214,11 @@ public sealed class MainWindow : Window
         Relayout();
     }
 
-    internal void OpenSettings(int? focusSlot = null) =>
+    internal void OpenSettings(int? focusSlot = null)
+    {
+        settings.AutoSeconds = auto.Seconds; // the dialog shows the current T
         new SettingsWindow(settings.Clone(), ApplySettings, focusSlot) { Owner = this }.ShowDialog();
+    }
 
     // ---------- Quick-access folders (empty-state slots and Datei > Schnellzugriff) ----------
 
@@ -285,14 +320,17 @@ public sealed class MainWindow : Window
         exit.Click += (_, _) => Close();
         live = Cmd("Live-Modus", KeyTable.Live);
         meta = Cmd("Metadaten", KeyTable.Meta);
+        autoItem = Cmd("Auto-Modus", KeyTable.Auto);
+        autoItem.IsCheckable = true; // state is set from auto.On whenever the menu opens
         var view = new MenuItem
         {
             Header = "Ansicht",
-            Items = { Cmd("Sortierung: Name/Datum", KeyTable.Sort), live, meta, Cmd("Vollbild", KeyTable.Fullscreen) },
+            Items = { Cmd("Sortierung: Name/Datum", KeyTable.Sort), live, autoItem, meta, Cmd("Vollbild", KeyTable.Fullscreen) },
         };
         view.SubmenuOpened += (_, _) =>
         {
             liveItem.IsChecked = this.live;
+            autoItem.IsChecked = auto.On;
             metaItem.IsChecked = metaOverlay.Visibility == Visibility.Visible;
         };
         var help = Cmd("Hilfe (F1)", KeyTable.Help); // top-level items cannot show gesture text
@@ -376,6 +414,7 @@ public sealed class MainWindow : Window
     {
         int token = ++loadToken;
         ResetWheelToLive(); // navigation, delete, folder open: the countdown starts over
+        auto.Restart();     // same for the Auto mode countdown (also on live-mode jumps)
         string? previous = currentPath;
         currentPath = path;
         if (path == null) { Clear("Keine Bilder im Ordner"); return; }
@@ -451,6 +490,7 @@ public sealed class MainWindow : Window
     void Clear(string? message)
     {
         if (spanned) ToggleSpanned(); // nothing to span without an image
+        SetAuto(false);               // no images left
         bitmap = null;
         parameters = null;
         image.Source = null;
@@ -715,12 +755,13 @@ public sealed class MainWindow : Window
         e.Handled = true;
         if (MenuUnderMouse || slotPanel.IsMouseOver || OverOverlay(e)) return;
         HideMenu(); // closes a keyboard-opened menu
-        ToggleSpanned();
+        if (auto.On && !spanned) ToggleAutoHold(); // Auto mode: pause on/off instead of spanning
+        else ToggleSpanned();
     }
 
     // Overlays are not hit-testable, so check the position against every visible one.
     bool OverOverlay(MouseEventArgs e) =>
-        new FrameworkElement[] { metaOverlay, helpOverlay, emptyBox, toastBox, hintBox }
+        new FrameworkElement[] { metaOverlay, helpOverlay, emptyBox, toastBox, hintBox, autoPanel }
             .Any(o => o.IsVisible && new Rect(o.RenderSize).Contains(e.GetPosition(o)));
 
     // Left single click does nothing; a double-click maximizes/restores the normal window (not fullscreen).
@@ -761,7 +802,9 @@ public sealed class MainWindow : Window
     protected override void OnKeyDown(KeyEventArgs e)
     {
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
-        if (e.IsRepeat && key is not (Key.Left or Key.Right)) return; // e.g. holding Del must not delete a series
+        // e.g. holding Del must not delete a series; +/- are rate-limited by TiltRepeat instead.
+        if (e.IsRepeat && key is not (Key.Left or Key.Right or Key.OemPlus or Key.Add or Key.OemMinus or Key.Subtract)) return;
+        keyIsRepeat = e.IsRepeat;
         var mods = Keyboard.Modifiers & ~ModifierKeys.Shift;
         if (key is Key.LeftAlt or Key.RightAlt) mods &= ~ModifierKeys.Alt; // Alt pressed alone
         var entry = KeyTable.Entries.FirstOrDefault(k => k.Modifiers == mods && k.Keys.Contains(key));
@@ -777,6 +820,7 @@ public sealed class MainWindow : Window
     {
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
         if (key is Key.LeftAlt or Key.RightAlt or Key.F10) e.Handled = true;
+        if (key is Key.OemPlus or Key.Add or Key.OemMinus or Key.Subtract) keyRepeat.Reset(); // released: next press is fresh
         base.OnKeyUp(e);
     }
 
@@ -828,7 +872,8 @@ public sealed class MainWindow : Window
         if (forwardWheelAtEnd)
         {
             wheelToLive.Pause = TimeSpan.FromSeconds(settings.WheelToLivePauseSeconds);
-            if (wheelToLive.AtLastImage(next!, live, settings.WheelToLive) is not string msg) { ToggleLive(); return; } // final step: like "L"
+            // While Auto mode is on the wheel-to-live counter is disabled.
+            if (wheelToLive.AtLastImage(next!, live, settings.WheelToLive && !auto.On) is not string msg) { ToggleLive(); return; } // final step: like "L"
             // Countdown messages replace each other and stay for the pause time (so they vanish when the counter expires).
             ShowToast(msg, wheelToLive.Count > 0 ? (int)wheelToLive.Pause.TotalMilliseconds : 1500);
             return;
@@ -919,6 +964,90 @@ public sealed class MainWindow : Window
         if (dir == null) return;
         string? newest = DirectoryNavigator.Newest(dir);
         if (newest != null) Load(newest, fromLive: true);
+    }
+
+    // ---------- Auto mode ----------
+
+    internal void ToggleAuto() => SetAuto(!auto.On);
+
+    void SetAuto(bool on)
+    {
+        if (on == auto.On || auto.Toggle(bitmap != null) != on) return; // cannot switch on without an image
+        autoPanel.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+        if (on) { autoTimer.Start(); AutoTick(); }
+        else { autoTimer.Stop(); SaveAutoSeconds(); autoHold = false; }
+        ShowToast(on ? "Auto-Modus an" : "Auto-Modus aus");
+    }
+
+    // Manual pause (middle button in Auto mode): bar frozen, elapsed time kept until resumed.
+    void ToggleAutoHold()
+    {
+        autoHold = !autoHold;
+        AutoTick();
+        ShowToast(autoHold ? "Auto-Modus pausiert" : "Auto-Modus läuft weiter");
+    }
+
+    // dir: -1 = faster (shorter T), +1 = slower. Elapsed time is kept; expired -> advances right away.
+    internal void ChangeAutoSpeed(int dir)
+    {
+        if (auto.On && auto.ChangeSpeed(dir)) AutoTick();
+    }
+
+    // Remembered T goes to the settings only when Auto mode ends or the app closes.
+    void SaveAutoSeconds()
+    {
+        if (settings.AutoSeconds == auto.Seconds) return;
+        settings.AutoSeconds = auto.Seconds;
+        try { settings.Save(); } catch (Exception) { }
+    }
+
+    // ~30 fps while Auto mode is on: pause handling, advance when due, panel update.
+    void AutoTick()
+    {
+        auto.Paused = autoHold || spanned || !Native.IsWindowEnabled(Hwnd); // manual pause, spanned 1:1 or a modal dialog
+        if (auto.Due) AutoNext();
+        UpdateAutoPanel();
+    }
+
+    void UpdateAutoPanel()
+    {
+        autoText.Text = $"Anzeigezeit = {auto.Seconds} s" + (autoHold ? " (Pause)" : "");
+        autoFill.Width = autoTrack.Width * auto.Remaining;
+    }
+
+    // Countdown expired: next image (directory read now); at the end a newer image wins, else the end-of-list setting.
+    void AutoNext()
+    {
+        if (dir == null || currentPath == null) { auto.Restart(); return; }
+        string cur = currentPath, folder = dir;
+        var (show, stop) = AutoAdvance.OnExpired(cur, DirectoryNavigator.Neighbor(folder, cur, currentTime, 1, sort),
+            () => DirectoryNavigator.Newest(folder) is string n && File.GetLastWriteTimeUtc(n) > currentTime ? n : null,
+            () => DirectoryNavigator.Neighbor(folder, null, default, 1, sort), settings.AutoEnd);
+        if (stop) { SetAuto(false); ShowToast("Auto-Modus aus (Ende der Bilder)"); }
+        else if (show != null) Load(show); // restarts the countdown
+        else auto.Restart();               // "Warten" (or single image): stay, full bar again
+    }
+
+    // "+"/"-": first press one step, held (auto-repeat) one step per repeat interval.
+    internal void AutoSpeedKey(int dir)
+    {
+        if (keyRepeat.Key(dir, keyIsRepeat) is int step and not 0) ChangeAutoSpeed(step);
+    }
+
+    // Horizontal (tilt) wheel: right = slower (longer T), left = faster. Every message is one tilt event (drivers send
+    // bursts and repeat while held); TiltRepeat turns them into one step at once plus one per interval.
+    // InvertTilt flips the sign for mice that report right as negative.
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+        HwndSource.FromHwnd(Hwnd)?.AddHook((IntPtr _, int msg, IntPtr w, IntPtr _, ref bool handled) =>
+        {
+            if (msg != 0x020E) return IntPtr.Zero; // WM_MOUSEHWHEEL
+            int sign = Math.Sign(unchecked((short)((long)w >> 16))) * (settings.InvertTilt ? -1 : 1); // positive delta = right
+            if (tiltRepeat.Tilt(sign) is int step and not 0) ChangeAutoSpeed(step);
+            handled = true;
+            return IntPtr.Zero;
+        });
     }
 
     internal void ToggleMeta()

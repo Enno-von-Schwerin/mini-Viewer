@@ -47,6 +47,12 @@ internal sealed class Settings
     public bool WheelToLive { get; set; } = true;            // scrolling on at the last image switches live mode on
     public double WheelToLivePauseSeconds { get; set; } = 2.0; // max pause between counted wheel steps
     public static bool ValidPause(double v) => v is >= 0.5 and <= 10;
+    // Auto mode
+    public int AutoSeconds { get; set; } = 5;               // default display time; also remembers the last used T
+    public AutoEndMode AutoEnd { get; set; } = AutoEndMode.Wait;
+    public bool InvertTilt { get; set; } = true;            // horizontal wheel sign inverted (the user's mouse reports right as negative)
+    public int TiltRepeatMs { get; set; } = 500;             // tilt wheel / +/- keys: one step per interval while held
+    public static bool ValidRepeat(int v) => v is >= 100 and <= 1000;
 
     public static readonly string FilePath =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "SimpleViewer", "settings.json");
@@ -90,6 +96,10 @@ internal sealed class Settings
             s.LiveMaxWaitSeconds = Get(r, nameof(LiveMaxWaitSeconds), s.LiveMaxWaitSeconds, v => v is >= 1 and <= 60);
             s.WheelToLive = Get(r, nameof(WheelToLive), s.WheelToLive);
             s.WheelToLivePauseSeconds = Get(r, nameof(WheelToLivePauseSeconds), s.WheelToLivePauseSeconds, ValidPause);
+            s.AutoSeconds = Get(r, nameof(AutoSeconds), s.AutoSeconds, AutoAdvance.IsValidTime);
+            s.AutoEnd = Get(r, nameof(AutoEnd), s.AutoEnd, Enum.IsDefined);
+            s.InvertTilt = Get(r, nameof(InvertTilt), s.InvertTilt);
+            s.TiltRepeatMs = Get(r, nameof(TiltRepeatMs), s.TiltRepeatMs, ValidRepeat);
             s.OpenFolderShows = Get(r, nameof(OpenFolderShows), s.OpenFolderShows, Enum.IsDefined);
             // Former global "QuickFolderFileDialog" serves as the per-slot default when a slot has no own value.
             bool legacyDialog = Get(r, "QuickFolderFileDialog", false);

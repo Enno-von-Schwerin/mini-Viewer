@@ -19,7 +19,8 @@ internal static class KeyTable
     public static readonly KeyEntry Live = new("L", "Live-Modus", [Key.L], (w, _) => w.ToggleLive());
     public static readonly KeyEntry Meta = new("I", "Metadaten", [Key.I], (w, _) => w.ToggleMeta());
     public static readonly KeyEntry Fullscreen = new("F11", "Vollbild auf dem aktuellen Monitor (in 1:1 über alle Monitore: zurück)", [Key.F11], (w, _) => w.ToggleFullscreen());
-    public static readonly KeyEntry Help = new("F1 / H", "diese Hilfe", [Key.F1, Key.H], (w, _) => w.ToggleHelp());
+    public static readonly KeyEntry Auto = new("A", "Auto-Modus (Diashow) ein/aus", [Key.A], (w, _) => w.ToggleAuto());
+    public static readonly KeyEntry Help =new("F1 / H", "diese Hilfe", [Key.F1, Key.H], (w, _) => w.ToggleHelp());
 
     public static readonly KeyEntry[] Entries =
     [
@@ -27,8 +28,9 @@ internal static class KeyTable
         new("Mausrad am letzten Bild weiter", "nach 5 Schritten Live-Modus ein (Pause zurücksetzen)", [], null),
         new("Rechte Maustaste + Mausrad / Strg + Mausrad", "Zoom (Punkt unter dem Mauszeiger bleibt stehen)", [], null),
         new("Maus bewegen", "bei Bild größer als die Fläche: Ausschnitt folgt der Maus (Bildrand = Rand von R, der Bildfläche in Ausgangsgröße)", [], null),
-        new("Mittlere Maustaste", "1:1-Ansicht über alle Monitore umschalten (Maus bewegen = Ausschnitt verschieben)", [], null),
+        new("Mittlere Maustaste", "1:1-Ansicht über alle Monitore umschalten (Maus bewegen = Ausschnitt verschieben); im Auto-Modus: Pause ein/aus", [], null),
         new("Doppelklick", "Fenster maximieren / wiederherstellen", [], null),
+        new("Mausrad links/rechts", "Anzeigezeit ändern (Auto-Modus; rechts = länger, links = kürzer); gehalten = alle 0,5 s ein Schritt", [], null),
         new("Maus an den oberen Rand", "Menü einblenden (nicht bei vergrößertem Bild oder 1:1 über alle Monitore)", [], null),
         new("Klick auf Schnellzugriff (ohne Bild)", "Ordner öffnen; leerer Slot: Einstellungen öffnen", [], null),
         new("0", "Ausgangsgröße", [Key.D0, Key.NumPad0], (w, _) => w.ResetZoom()),
@@ -36,6 +38,9 @@ internal static class KeyTable
         new("Links / Rechts", "vorheriges/nächstes Bild", [Key.Left, Key.Right], (w, k) => w.Step(k == Key.Left ? -1 : 1)),
         Sort,
         Live,
+        Auto,
+        new("+", "Auto-Modus: langsamer (längere Anzeigezeit); gehalten = alle 0,5 s ein Schritt", [Key.OemPlus, Key.Add], (w, _) => w.AutoSpeedKey(1)),
+        new("-", "Auto-Modus: schneller (kürzere Anzeigezeit); gehalten = alle 0,5 s ein Schritt", [Key.OemMinus, Key.Subtract], (w, _) => w.AutoSpeedKey(-1)),
         Meta,
         new("C", "alles kopieren", [Key.C], (w, _) => w.Copy(CopyPart.All)),
         new("P", "Prompt kopieren", [Key.P], (w, _) => w.Copy(CopyPart.Prompt)),
@@ -72,7 +77,9 @@ internal static class KeyTable
             Key.Down => (modifier, 3, 3, "", index),
             Key.Delete => (modifier, 3, 4, "", index),
             Key.Escape => (modifier, 3, 5, "", index),
-            _ => (modifier, 3, 6, e.Label, index), // anything else: alphabetically by display name
+            Key.OemPlus => (modifier, 3, 6, "", index),
+            Key.OemMinus => (modifier, 3, 7, "", index),
+            _ => (modifier, 3, 8, e.Label, index), // anything else: alphabetically by display name
         };
     }
 
