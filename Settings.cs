@@ -53,8 +53,11 @@ internal sealed class Settings
     public bool InvertTilt { get; set; } = true;            // horizontal wheel sign inverted (the user's mouse reports right as negative)
     public int TiltRepeatMs { get; set; } = 500;             // tilt wheel / +/- keys: one step per interval while held
     public static bool ValidRepeat(int v) => v is >= 100 and <= 1000;
+    // Sorting into subfolders: exactly 4 target names for Q/W/E/R; "" = slot unused
+    public List<string> SortFolders { get; set; } = [.. SortMove.Defaults];
 
-    public static readonly string FilePath =
+    // SIMPLEVIEWER_SETTINGS overrides the location (UI tests use it so the real file is never touched).
+    public static readonly string FilePath = Environment.GetEnvironmentVariable("SIMPLEVIEWER_SETTINGS") is { Length: > 0 } p ? p :
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "SimpleViewer", "settings.json");
 
     static readonly JsonSerializerOptions Json = new() { WriteIndented = true, Converters = { new JsonStringEnumConverter() } };
@@ -63,6 +66,7 @@ internal sealed class Settings
     {
         var s = (Settings)MemberwiseClone();
         s.QuickFolders = [.. QuickFolders]; // records are immutable, a new list is enough
+        s.SortFolders = [.. SortFolders];
         return s;
     }
 
@@ -109,6 +113,12 @@ internal sealed class Settings
                     s.QuickFolders[i] = new QuickFolder(Str(q[i], nameof(QuickFolder.Name)), Str(q[i], nameof(QuickFolder.Path)),
                         q[i].ValueKind == JsonValueKind.Object && q[i].TryGetProperty(nameof(QuickFolder.FileDialog), out var fd)
                             && fd.ValueKind is JsonValueKind.True or JsonValueKind.False ? fd.GetBoolean() : legacyDialog);
+            // Sort folders per slot: a non-string or invalid name keeps that slot's default; duplicates are resolved after.
+            if (r.TryGetProperty(nameof(SortFolders), out var sf) && sf.ValueKind == JsonValueKind.Array)
+                for (int i = 0; i < Math.Min(SortMove.Keys.Length, sf.GetArrayLength()); i++)
+                    if (sf[i].ValueKind == JsonValueKind.String && sf[i].GetString()!.Trim() is var n && SortMove.NameError(n) == null)
+                        s.SortFolders[i] = n;
+            SortMove.FixDuplicates(s.SortFolders);
         }
         catch (Exception) { } // missing or unparsable file: defaults
         return s;

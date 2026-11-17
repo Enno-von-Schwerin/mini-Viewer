@@ -35,6 +35,9 @@ public sealed class MainWindow : Window
     readonly Menu menu;
     readonly MenuItem liveItem, metaItem;
     readonly MenuItem quickMenu = new() { Header = "Schnellzugriff" };
+    readonly MenuItem moveMenu = new() { Header = "In Ordner verschieben" };
+    readonly MoveHistory moves = new();  // undo stack for Q/W/E/R (session only)
+    string? restoredPath;                // file put back by undo: its watcher event must not trigger a live jump
     readonly DispatcherTimer toastTimer = new();
     readonly DispatcherTimer liveDebounce = new() { Interval = TimeSpan.FromMilliseconds(150) };
     FileSystemWatcher? watcher;
@@ -63,6 +66,8 @@ public sealed class MainWindow : Window
     readonly Border autoTrack = new() { HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 4, 0, 0) };
     readonly Border autoFill = new() { HorizontalAlignment = HorizontalAlignment.Left };
     readonly Border autoPanel;
+    readonly TextBlock zoomText = new();
+    readonly Border zoomBox;       // "Zoom n %", shown permanently while the zoom is not 100 %
     MenuItem autoItem = null!;
     bool autoHold;                 // Auto mode paused by the middle button
 
@@ -105,11 +110,15 @@ public sealed class MainWindow : Window
         autoPanel.Padding = new Thickness(8, 4, 8, 6);
         autoPanel.HorizontalAlignment = HorizontalAlignment.Right;
         autoPanel.Margin = new Thickness(0, 6, 0, 0);
-        // Short messages stack above the auto panel at the bottom right instead of overlapping it.
+        zoomBox = Overlay(zoomText);
+        zoomBox.Padding = toastBox.Padding;
+        zoomBox.HorizontalAlignment = HorizontalAlignment.Right;
+        zoomBox.Margin = new Thickness(0, 6, 0, 0);
+        // Short messages stack above the zoom display and the auto panel at the bottom right instead of overlapping them.
         var bottomRight = new StackPanel
         {
             Margin = new Thickness(10), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom,
-            IsHitTestVisible = false, Children = { toastBox, autoPanel },
+            IsHitTestVisible = false, Children = { toastBox, zoomBox, autoPanel },
         };
         hintBox = Overlay(new TextBlock { Text = "Ordner öffnen: Strg+O\nHilfe: F1", TextAlignment = TextAlignment.Center });
         hintBox.VerticalAlignment = VerticalAlignment.Top;
@@ -191,7 +200,7 @@ public sealed class MainWindow : Window
         var fg = Settings.ParseColor(s.FontColor) ?? Colors.White;
         overlayFg = new SolidColorBrush(fg);
         overlayBg = OverlayBrush(Settings.ParseColor(s.OverlayBackground) ?? Colors.Black, s.OverlayOpacity);
-        foreach (var b in new[] { metaOverlay, helpOverlay, emptyBox, toastBox, hintBox, autoPanel }) StyleOverlay(b);
+        foreach (var b in new[] { metaOverlay, helpOverlay, emptyBox, toastBox, hintBox, autoPanel, zoomBox }) StyleOverlay(b);
         // Bar: fixed width of 12 x font size; track in the dimmed font color, fill in the font color.
         autoTrack.Width = s.FontSize * 12;
         autoTrack.Height = autoFill.Height = Math.Max(4, s.FontSize * 0.4);
@@ -200,6 +209,7 @@ public sealed class MainWindow : Window
         tiltRepeat.Interval = keyRepeat.Interval = TimeSpan.FromMilliseconds(s.TiltRepeatMs);
         UpdateAutoPanel();
         BuildQuickAccess();
+        BuildMoveMenu();
         var area = new SolidColorBrush(Settings.ParseColor(s.ImageBackground) ?? Colors.Black);
         canvas.Background = area;
         Background = area;
@@ -260,6 +270,24 @@ public sealed class MainWindow : Window
         quickMenu.IsEnabled = quickMenu.Items.Count > 0;
         quickMenu.Header = quickMenu.IsEnabled ? "Schnellzugriff" : "Schnellzugriff (keine Ordner eingerichtet)";
         UpdateSlotLayout();
+    }
+
+    // Datei > In Ordner verschieben: configured targets with their keys (unused slots hidden), then undo.
+    void BuildMoveMenu()
+    {
+        moveMenu.Items.Clear();
+        for (int i = 0; i < KeyTable.SortKeys.Length; i++)
+        {
+            if (settings.SortFolders[i].Length == 0) continue;
+            var key = KeyTable.SortKeys[i];
+            var mi = new MenuItem { Header = settings.SortFolders[i].Replace("_", "__"), InputGestureText = key.ToString() };
+            mi.Click += (_, _) => KeyTable.SortInto.Action!(this, key);
+            moveMenu.Items.Add(mi);
+        }
+        if (moveMenu.Items.Count > 0) moveMenu.Items.Add(new Separator());
+        var undo = new MenuItem { Header = "Verschieben rückgängig", InputGestureText = KeyTable.UndoMove.Label };
+        undo.Click += (_, _) => KeyTable.UndoMove.Action!(this, Key.Z);
+        moveMenu.Items.Add(undo);
     }
 
     // Horizontal row if it fits, otherwise a vertical stack.
@@ -347,7 +375,7 @@ public sealed class MainWindow : Window
                     Header = "Datei",
                     Items =
                     {
-                        Cmd("Ordner öffnen...", KeyTable.OpenFolder), quickMenu, Cmd("Im Explorer anzeigen", KeyTable.ShowInExplorer),
+                        Cmd("Ordner öffnen...", KeyTable.OpenFolder), quickMenu, Cmd("Im Explorer anzeigen", KeyTable.ShowInExplorer), moveMenu,
                         Cmd("Einstellungen...", KeyTable.OpenSettings), exit,
                     },
                 },
@@ -471,6 +499,7 @@ public sealed class MainWindow : Window
         if (spanned) scale = 1; else autoFit = true;
         animStart = null;
         Relayout();
+        UpdateZoomInfo(); // also when Relayout had nothing to apply (same size as before)
         UpdateTitle();
         if (!everLoaded)
         {
@@ -497,6 +526,7 @@ public sealed class MainWindow : Window
         emptyText.Text = message ?? "";
         emptyBox.Visibility = message != null ? Visibility.Visible : Visibility.Collapsed;
         emptyState.Visibility = Visibility.Visible;
+        UpdateZoomInfo(); // no image: no zoom display
         metaText.Text = "keine Metadaten";
         UpdateTitle();
     }
@@ -599,6 +629,7 @@ public sealed class MainWindow : Window
         Canvas.SetTop(image, Math.Round(offY) / d);
         RenderOptions.SetBitmapScalingMode(image,
             Math.Abs(scale - 1) < 1e-9 ? BitmapScalingMode.NearestNeighbor : BitmapScalingMode.HighQuality);
+        UpdateZoomInfo(); // every scale change ends up here
     }
 
     // Keeps the image point under the cursor stable, then hands over to the mapping with a short transition.
@@ -618,6 +649,14 @@ public sealed class MainWindow : Window
         animStart = DateTime.UtcNow;
         Apply();
         Track();
+    }
+
+    // Zoom display at the standard message position: stays while the zoom is not 100 % (1 image pixel = 1 screen pixel).
+    void UpdateZoomInfo()
+    {
+        double percent = Math.Round(scale * 100);
+        zoomText.Text = $"Zoom {percent} %";
+        zoomBox.Visibility = bitmap != null && percent != 100 ? Visibility.Visible : Visibility.Collapsed;
     }
 
     internal void ResetZoom()
@@ -761,7 +800,7 @@ public sealed class MainWindow : Window
 
     // Overlays are not hit-testable, so check the position against every visible one.
     bool OverOverlay(MouseEventArgs e) =>
-        new FrameworkElement[] { metaOverlay, helpOverlay, emptyBox, toastBox, hintBox, autoPanel }
+        new FrameworkElement[] { metaOverlay, helpOverlay, emptyBox, toastBox, hintBox, autoPanel, zoomBox }
             .Any(o => o.IsVisible && new Rect(o.RenderSize).Contains(e.GetPosition(o)));
 
     // Left single click does nothing; a double-click maximizes/restores the normal window (not fullscreen).
@@ -937,9 +976,10 @@ public sealed class MainWindow : Window
     // Runs on a thread-pool thread.
     void OnFileEvent(object sender, FileSystemEventArgs e)
     {
-        if (!DirectoryNavigator.IsSupported(e.FullPath)) return;
+        if (!DirectoryNavigator.IsSupported(e.FullPath) || Directory.Exists(e.FullPath)) return; // e.g. a sort folder "x.png"
         Dispatcher.InvokeAsync(() =>
         {
+            if (string.Equals(e.FullPath, restoredPath, StringComparison.OrdinalIgnoreCase)) { restoredPath = null; return; } // undo shows it itself
             if (!live) return;
             reloadCurrent = false; // a new file wins: jump to the newest
             liveDebounce.Stop();
@@ -1097,5 +1137,43 @@ public sealed class MainWindow : Window
         catch (Exception ex) { ShowToast("Löschen fehlgeschlagen: " + ex.Message, 3000); return; }
         if (File.Exists(path)) return; // cancelled or failed silently
         Load(DirectoryNavigator.AfterRemoval(dir, path, currentTime, sort));
+    }
+
+    // Q/W/E/R: moves the current image into the slot's subfolder of its own folder, then continues like Delete.
+    // The file is not held open (Decode loads it completely and disposes the stream).
+    internal void SortInto(int slot)
+    {
+        string? path = currentPath;
+        if (bitmap == null || dir == null || path == null || slot < 0) return;
+        string name = settings.SortFolders[slot];
+        if (name.Length == 0) { ShowToast("Slot nicht belegt"); return; }
+        string dest;
+        try { dest = SortMove.Move(path, Path.Combine(Path.GetDirectoryName(path)!, name)); }
+        catch (Exception ex) { ShowToast("Verschieben fehlgeschlagen: " + ex.Message, 3000); return; }
+        moves.Push(path, dest);
+        Load(DirectoryNavigator.AfterRemoval(dir, path, currentTime, sort));
+        ShowToast($"-> {name}: {Path.GetFileName(path)}");
+    }
+
+    // Strg+Z: moves the last sorted file back (free name if taken); shows it if its folder is still the browsing folder.
+    internal void UndoMove()
+    {
+        if (!moves.TryPeek(out var m)) { ShowToast("Nichts rückgängig zu machen"); return; }
+        string back;
+        try { back = SortMove.Move(m.To, Path.GetDirectoryName(m.From)!, Path.GetFileName(m.From)); }
+        catch (Exception ex)
+        {
+            if (!File.Exists(m.To)) moves.Pop(); // gone: drop the entry; otherwise (e.g. locked) keep it for a retry
+            ShowToast("Rückgängig fehlgeschlagen: " + ex.Message, 3000);
+            return;
+        }
+        moves.Pop();
+        if (string.Equals(Path.GetDirectoryName(back), dir, StringComparison.OrdinalIgnoreCase))
+        {
+            if (live) restoredPath = back;
+            Load(back);
+            ShowToast("Verschieben rückgängig: " + Path.GetFileName(back));
+        }
+        else ShowToast("Verschieben rückgängig: " + back, 3000);
     }
 }

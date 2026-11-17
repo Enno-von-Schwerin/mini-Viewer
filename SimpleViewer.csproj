@@ -9,6 +9,8 @@
     <AssemblyName>SimpleViewer</AssemblyName>
     <RootNamespace>SimpleViewer</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Embedded into the exe: Explorer, taskbar, Alt+Tab, title bar and the DefaultIcon entries written by -install. -->
+    <ApplicationIcon>app.ico</ApplicationIcon>
   </PropertyGroup>
 
 </Project>

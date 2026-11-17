@@ -21,6 +21,8 @@ internal sealed class SettingsWindow : Window
     readonly CheckBox invertTilt = new() { Content = "Seitliches Mausrad: Richtung umkehren" };
     readonly TextBox tiltRepeat = new() { Width = 60, ToolTip = "100 bis 1000 ms; ungültige Werte werden durch 500 ersetzt" };
     readonly CheckBox[] slotDialogs = new CheckBox[Settings.QuickFolderCount];
+    readonly TextBox[] sortFolders = SortMove.Keys.Select(_ => new TextBox
+        { Width = 200, HorizontalAlignment = HorizontalAlignment.Left, ToolTip = "Name des Unterordners (leer = Taste nicht belegt)" }).ToArray();
     readonly Border preview = new() { Padding = new Thickness(12, 8, 12, 8), CornerRadius = new CornerRadius(6) };
     readonly TextBlock previewText = new() { Text = "Seed: 1234567890, Steps: 30\nÄÖÜ äöü ß – Beispieltext" };
     readonly Border previewBack = new() { Padding = new Thickness(12), Background = new LinearGradientBrush(Colors.White, Colors.SteelBlue, 0) };
@@ -75,6 +77,7 @@ internal sealed class SettingsWindow : Window
         var autoGroup = Group("Auto-Modus", Row("Standard-Anzeigezeit (s)", autoSeconds), Row("Am Ende der Bilder", autoEnd),
             Row("", invertTilt),
             Row("Seitliches Mausrad: Wiederholintervall (ms)", new StackPanel { Orientation = Orientation.Horizontal, Children = { tiltRepeat } }));
+        var sortGroup = Group("Sortieren", SortMove.Keys.Select((k, i) => Row($"Taste {k} -> Unterordner", sortFolders[i])).ToArray());
 
         var defaults = Button("Standardwerte", () => Show(new Settings()));
         var ok = Button("OK", () => { if (TryApply()) Close(); });
@@ -91,7 +94,7 @@ internal sealed class SettingsWindow : Window
         {
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             MaxHeight = SystemParameters.WorkArea.Height * 0.9,
-            Content = new StackPanel { Margin = new Thickness(12), Width = 720, Children = { overlays, view, quickGroup, liveGroup, autoGroup, buttons } },
+            Content = new StackPanel { Margin = new Thickness(12), Width = 720, Children = { overlays, view, quickGroup, liveGroup, autoGroup, sortGroup, buttons } },
         };
         // Opened from an empty quick-access slot: scroll to the group and focus that slot's path field.
         if (focusSlot is int slot && slot >= 0 && slot < Settings.QuickFolderCount)
@@ -216,6 +219,7 @@ internal sealed class SettingsWindow : Window
             slotPaths[i].Text = s.QuickFolders[i].Path;
             slotDialogs[i].IsChecked = s.QuickFolders[i].FileDialog;
         }
+        for (int i = 0; i < sortFolders.Length; i++) sortFolders[i].Text = s.SortFolders[i];
         Refresh();
     }
 
@@ -242,6 +246,12 @@ internal sealed class SettingsWindow : Window
             MessageBox.Show(this, "Bitte gültige Farben im Format #RRGGBB eingeben.", "Einstellungen", MessageBoxButton.OK, MessageBoxImage.Warning);
             return false;
         }
+        var sortNames = sortFolders.Select(t => t.Text.Trim()).ToList();
+        if (SortMove.ListError(sortNames) is string sortError)
+        {
+            MessageBox.Show(this, "Sortieren: " + sortError, "Einstellungen", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return false;
+        }
         var s = new Settings
         {
             FontFamily = font.SelectedItem as string ?? "Consolas",
@@ -264,6 +274,7 @@ internal sealed class SettingsWindow : Window
             OpenFolderShows = (OpenFolderMode)Math.Max(0, openShows.SelectedIndex),
             QuickFolders = Enumerable.Range(0, Settings.QuickFolderCount)
                 .Select(i => new QuickFolder(slotNames[i].Text.Trim(), slotPaths[i].Text.Trim(), slotDialogs[i].IsChecked == true)).ToList(),
+            SortFolders = sortNames,
         };
         wheelPause.Text = s.WheelToLivePauseSeconds.ToString("0.0#", German); // show the fallback if the input was invalid
         tiltRepeat.Text = s.TiltRepeatMs.ToString();

@@ -20,13 +20,17 @@ internal static class KeyTable
     public static readonly KeyEntry Meta = new("I", "Metadaten", [Key.I], (w, _) => w.ToggleMeta());
     public static readonly KeyEntry Fullscreen = new("F11", "Vollbild auf dem aktuellen Monitor (in 1:1 über alle Monitore: zurück)", [Key.F11], (w, _) => w.ToggleFullscreen());
     public static readonly KeyEntry Auto = new("A", "Auto-Modus (Diashow) ein/aus", [Key.A], (w, _) => w.ToggleAuto());
-    public static readonly KeyEntry Help =new("F1 / H", "diese Hilfe", [Key.F1, Key.H], (w, _) => w.ToggleHelp());
+    public static readonly Key[] SortKeys = [Key.Q, Key.W, Key.E, Key.R]; // slot order = SortMove.Keys
+    public static readonly KeyEntry SortInto = new("Q / W / E / R", "Bild in Unterordner verschieben (Ziel je Taste in den Einstellungen, Standard 1–4; Name schon vorhanden: „ (2)“ usw.; danach nächstes Bild; gehalten = nur ein Bild)",
+        SortKeys, (w, k) => w.SortInto(Array.IndexOf(SortKeys, k)));
+    public static readonly KeyEntry UndoMove = new("Strg+Z", "Verschieben rückgängig (bis zu 50 Schritte in dieser Sitzung)", [Key.Z], (w, _) => w.UndoMove(), ModifierKeys.Control);
+    public static readonly KeyEntry Help = new("F1 / H", "diese Hilfe", [Key.F1, Key.H], (w, _) => w.ToggleHelp());
 
     public static readonly KeyEntry[] Entries =
     [
         new("Mausrad", "vorheriges/nächstes Bild (kein Umlauf am Anfang/Ende)", [], null),
         new("Mausrad am letzten Bild weiter", "nach 5 Schritten Live-Modus ein (Pause zurücksetzen)", [], null),
-        new("Rechte Maustaste + Mausrad / Strg + Mausrad", "Zoom (Punkt unter dem Mauszeiger bleibt stehen)", [], null),
+        new("Rechte Maustaste + Mausrad / Strg + Mausrad", "Zoom (Punkt unter dem Mauszeiger bleibt stehen; Zoomfaktor steht unten rechts, solange er nicht 100 % ist)", [], null),
         new("Maus bewegen", "bei Bild größer als die Fläche: Ausschnitt folgt der Maus (Bildrand = Rand von R, der Bildfläche in Ausgangsgröße)", [], null),
         new("Mittlere Maustaste", "1:1-Ansicht über alle Monitore umschalten (Maus bewegen = Ausschnitt verschieben); im Auto-Modus: Pause ein/aus", [], null),
         new("Doppelklick", "Fenster maximieren / wiederherstellen", [], null),
@@ -46,6 +50,8 @@ internal static class KeyTable
         new("P", "Prompt kopieren", [Key.P], (w, _) => w.Copy(CopyPart.Prompt)),
         new("S", "Seed kopieren", [Key.S], (w, _) => w.Copy(CopyPart.Seed)),
         new("Entf", "in den Papierkorb", [Key.Delete], (w, _) => w.DeleteCurrent()),
+        SortInto,
+        UndoMove,
         OpenFolder,
         ShowInExplorer,
         OpenSettings,

@@ -76,6 +76,21 @@ Außerdem im Menü unter Datei > Schnellzugriff. Existiert ein Ordner nicht mehr
 Pro Slot lässt sich „Datei-Dialog“ ankreuzen (Standard: aus): Dann öffnet ein Klick auf diesen Slot einen
 Datei-Dialog in seinem Ordner; das gewählte Bild wird angezeigt und von dort aus weiter geblättert. Abbrechen ändert nichts.
 
+## Sortieren in Unterordner
+
+- **Q / W / E / R** verschieben das aktuelle Bild in einen Unterordner seines Ordners (wird bei Bedarf angelegt) und zeigen
+  danach das nächste Bild der aktuellen Sortierung – das vorherige, wenn es das letzte war; ohne Bilder erscheint die leere Ansicht (wie nach Entf).
+  Meldung z. B. „-> Gut: bild.png“. Gehaltene Tasten verschieben genau ein Bild. Funktioniert auch im Vollbild und in der 1:1-Ansicht.
+- Ordnernamen unter Einstellungen > „Sortieren“ („Taste Q -> Unterordner“ … „Taste R -> Unterordner“), Standard 1, 2, 3, 4.
+  Leeres Feld = Taste nicht belegt („Slot nicht belegt“). Erlaubt sind Namen ohne `\ / : * ? " < > |`, nicht „.“/„..“, höchstens 50 Zeichen,
+  ohne Doppelte (Groß-/Kleinschreibung egal); sonst lassen sich die Einstellungen nicht übernehmen.
+- Gibt es im Zielordner schon eine Datei gleichen Namens, wird „ (2)“, „ (3)“ … angehängt – nie überschrieben. Schlägt das Verschieben
+  fehl (Datei gesperrt, keine Berechtigung), erscheint der Fehler und das Bild bleibt. Der Papierkorb wird nicht benutzt.
+- **Strg+Z** holt die zuletzt verschobene Datei an ihren alten Platz und Namen zurück (Konflikt wie oben) und zeigt sie wieder;
+  wurde inzwischen ein anderer Ordner geöffnet, erscheint nur eine Meldung mit dem Pfad. Bis zu 50 Schritte, nur für die laufende Sitzung.
+- Auch unter Datei > „In Ordner verschieben“. Die Unterordner werden beim Blättern nicht angezeigt; im Live-Modus wird nicht zurückgesprungen,
+  im Auto-Modus beginnt der Countdown neu.
+
 ## Build / Publish
 
 ```
@@ -83,6 +98,9 @@ dotnet publish SimpleViewer.csproj -c Release -r win-x64 --self-contained true -
 ```
 
 Ergebnis: `bin\Release\net8.0-windows\win-x64\publish\SimpleViewer.exe`
+
+Das Programm-Icon `app.ico` (16–256 px) wird beim Build in die exe eingebettet und erscheint im Explorer,
+in der Taskleiste, bei Alt+Tab und in der Titelleiste.
 
 ## Installation (nur HKCU, keine Adminrechte)
 
@@ -94,6 +112,9 @@ SimpleViewer.exe --uninstall
 
 Die exe vorher an ihren endgültigen Ort kopieren – der Pfad wird in die Registry geschrieben.
 Als Standard-App muss SimpleViewer einmalig über „Öffnen mit > Immer“ oder die Windows-Einstellungen gewählt werden.
+`--install` verweist für SimpleViewer, den Kontextmenü-Eintrag und den Dateityp „SimpleViewer Bild“ auf das Icon der exe;
+JPG/PNG-Dateien zeigen es im Explorer, sobald SimpleViewer ihre Standard-App ist und keine Miniaturansicht angezeigt wird.
+Nach einem Icon-Wechsel hält Windows das alte Bild ggf. im Icon-Cache fest (Abmelden oder `ie4uinit.exe -show` hilft).
 
 ## Tasten und Maus
 
@@ -110,6 +131,7 @@ Die Tabelle wird aus `KeyTable.cs` erzeugt (`SimpleViewer.exe --update-readme RE
 | L | Live-Modus |
 | O | Sortierung Name/Datum |
 | P | Prompt kopieren |
+| Q / W / E / R | Bild in Unterordner verschieben (Ziel je Taste in den Einstellungen, Standard 1–4; Name schon vorhanden: „ (2)“ usw.; danach nächstes Bild; gehalten = nur ein Bild) |
 | S | Seed kopieren |
 | F1 / H | diese Hilfe |
 | F11 | Vollbild auf dem aktuellen Monitor (in 1:1 über alle Monitore: zurück) |
@@ -121,10 +143,11 @@ Die Tabelle wird aus `KeyTable.cs` erzeugt (`SimpleViewer.exe --update-readme RE
 | Alt / F10 | Menü einblenden |
 | Strg+E | im Explorer anzeigen |
 | Strg+O | Ordner öffnen |
+| Strg+Z | Verschieben rückgängig (bis zu 50 Schritte in dieser Sitzung) |
 | Strg+, | Einstellungen |
 | Mausrad | vorheriges/nächstes Bild (kein Umlauf am Anfang/Ende) |
 | Mausrad am letzten Bild weiter | nach 5 Schritten Live-Modus ein (Pause zurücksetzen) |
-| Rechte Maustaste + Mausrad / Strg + Mausrad | Zoom (Punkt unter dem Mauszeiger bleibt stehen) |
+| Rechte Maustaste + Mausrad / Strg + Mausrad | Zoom (Punkt unter dem Mauszeiger bleibt stehen; Zoomfaktor steht unten rechts, solange er nicht 100 % ist) |
 | Maus bewegen | bei Bild größer als die Fläche: Ausschnitt folgt der Maus (Bildrand = Rand von R, der Bildfläche in Ausgangsgröße) |
 | Mittlere Maustaste | 1:1-Ansicht über alle Monitore umschalten (Maus bewegen = Ausschnitt verschieben); im Auto-Modus: Pause ein/aus |
 | Doppelklick | Fenster maximieren / wiederherstellen |
